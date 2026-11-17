@@ -7,6 +7,7 @@ import {
   Compass,
   Flag,
   MessageSquare,
+  MoreHorizontal,
   Music,
   Plus,
   RotateCcw,
@@ -140,10 +141,12 @@ export function App() {
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [isSendingFeedback, setIsSendingFeedback] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [graphicsQuality, setGraphicsQuality] = useState<GraphicsQuality>('high');
   const [volumetricIntensity, setVolumetricIntensity] = useState(1.35);
   const [bloomEnabled, setBloomEnabled] = useState(true);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const [frogLine, setFrogLine] = useState<string | null>(null);
   const frogBubbleRef = useRef<HTMLDivElement>(null);
   const frogTimerRef = useRef<number | null>(null);
@@ -346,6 +349,18 @@ export function App() {
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [isMusicMenuOpen]);
+
+  // Close Mobile More Popover on outside click
+  useEffect(() => {
+    if (!isMoreMenuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setIsMoreMenuOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [isMoreMenuOpen]);
 
   // Sync soundscape state (e.g. when auto-cycle advances to next track)
   useEffect(() => {
@@ -786,10 +801,7 @@ export function App() {
               <span>·</span>
               <span className="tabular-nums">{planes.length} drifting</span>
               {selectedCountry && !regionFallbackCountry && (
-                <>
-                  <span>·</span>
-                  <span>{getCountryName(selectedCountry)}</span>
-                </>
+                <span className="hide-mobile">· {getCountryName(selectedCountry)}</span>
               )}
             </div>
             {regionFallbackCountry && (
@@ -867,7 +879,7 @@ export function App() {
             </div>
 
             {/* Ambient Sound Toggle */}
-            <div className="control-strip">
+            <div className="control-strip hide-mobile">
               <button
                 id="sound-toggle-btn"
                 type="button"
@@ -1126,7 +1138,7 @@ export function App() {
                 setIsComposeOpen(true);
                 soundscape.playUiSfx('open');
               }}
-              className="primary-cta-btn"
+              className="primary-cta-btn hide-mobile"
             >
               <Plus size={15} />
               <span>Fold a Plane</span>
@@ -1182,17 +1194,33 @@ export function App() {
 
         {/* Bottom Floating Game Actions */}
         <footer className="bottom-hud">
-          <button
-            id="catch-random-btn"
-            type="button"
-            onClick={handleCatchRandomPlane}
-            className="catch-cta-btn"
-          >
-            <Wind size={15} />
-            <span>Catch a Plane</span>
-          </button>
+          <div className="bottom-hud-primary">
+            <button
+              id="catch-random-btn"
+              type="button"
+              onClick={handleCatchRandomPlane}
+              className="catch-cta-btn"
+            >
+              <Wind size={15} />
+              <span>Catch a Plane</span>
+            </button>
 
-          <div className="bottom-hud-actions">
+            <button
+              id="open-compose-mobile-cta"
+              type="button"
+              onClick={() => {
+                setComposeError(null);
+                setIsComposeOpen(true);
+                soundscape.playUiSfx('open');
+              }}
+              className="primary-cta-btn mobile-only"
+            >
+              <Plus size={15} />
+              <span>Fold a Plane</span>
+            </button>
+          </div>
+
+          <div className="bottom-hud-actions hide-mobile">
             <button
               id="feedback-hud-btn"
               type="button"
@@ -1227,6 +1255,77 @@ export function App() {
               <Coffee size={14} />
               <span>Support</span>
             </button>
+          </div>
+
+          <div className="popover-anchor mobile-only" ref={moreMenuRef}>
+            <button
+              id="mobile-more-btn"
+              type="button"
+              onClick={() =>
+                setIsMoreMenuOpen((v) => {
+                  soundscape.playUiSfx(v ? 'close' : 'open');
+                  return !v;
+                })
+              }
+              className={`support-btn icon-only mobile-more-btn ${isMoreMenuOpen ? 'active' : ''}`}
+              aria-expanded={isMoreMenuOpen}
+              aria-haspopup="menu"
+              aria-label="More options"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+
+            <AnimatePresence>
+              {isMoreMenuOpen && (
+                <motion.div
+                  className="popover-menu popover-up"
+                  role="menu"
+                  aria-label="More options"
+                  initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                  transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      setIsSupportOpen(true);
+                      soundscape.playUiSfx('open');
+                    }}
+                    className="popover-item"
+                  >
+                    <span>Support the Sky</span>
+                    <Coffee size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      openFeedbackModal('feedback');
+                    }}
+                    className="popover-item"
+                  >
+                    <span>Send Feedback</span>
+                    <MessageSquare size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsMoreMenuOpen(false);
+                      openFeedbackModal('bug');
+                    }}
+                    className="popover-item"
+                  >
+                    <span>Report a Bug</span>
+                    <Bug size={13} />
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </footer>
       </div>

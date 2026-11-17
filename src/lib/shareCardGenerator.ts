@@ -19,7 +19,7 @@ export interface ShareCardOptions {
   islandSnapshot?: HTMLImageElement | null;
 }
 
-const ASPECT_DIMS: Record<ShareAspect, { w: number; h: number }> = {
+export const ASPECT_DIMS: Record<ShareAspect, { w: number; h: number }> = {
   square: { w: 1080, h: 1080 },
   portrait: { w: 1080, h: 1350 },
   landscape: { w: 1200, h: 675 },
@@ -33,7 +33,7 @@ const TINT_BG: Record<PaperTint, string> = {
   gold: '#FBF6E8',
 };
 
-const THEME_BG: Record<
+export const THEME_BG: Record<
   Exclude<ShareTheme, 'island'>,
   { top: string; mid: string; bottom: string; glow: string; isLight?: boolean }
 > = {
@@ -92,7 +92,7 @@ function splitNoteTitleAndBody(plane: PaperPlaneNote): { title: string; body: st
   return { title: `Plane #${plane.number}`, body: raw };
 }
 
-function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+export function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
   const paragraphs = text.split('\n');
   const lines: string[] = [];
 
@@ -117,7 +117,7 @@ function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number
   return lines;
 }
 
-function drawRoundedRect(
+export function drawRoundedRect(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
@@ -138,7 +138,7 @@ function drawRoundedRect(
   ctx.closePath();
 }
 
-function drawPaperPlaneIcon(
+export function drawPaperPlaneIcon(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
@@ -172,7 +172,7 @@ function drawPaperPlaneIcon(
   ctx.restore();
 }
 
-function drawDuckFloatieFrog(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) {
+export function drawDuckFloatieFrog(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number) {
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(scale, scale);

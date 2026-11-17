@@ -19,6 +19,16 @@ export interface PaperPlaneNote {
   isUserCreated?: boolean;
 }
 
+export interface SkyStats {
+  totalPlanes: number;
+  totalUnfolds: number;
+  totalDistanceKm: number;
+  countriesCount: number;
+  planesToday: number;
+  mostUnfoldedReads: number;
+  updatedAt: string;
+}
+
 export interface BiomeSpot {
   id: string;
   label: string;

@@ -395,6 +395,67 @@ describe('Paper Planes Backend API', () => {
     expect(jpRandomBody.fallbackUsed).toBe(false);
     expect(jpRandomBody.plane.id).toBe(created.plane.id);
   });
+
+  it('GET /api/stats returns live aggregate sky metrics and updates after launches and unfolds', async () => {
+    const initialRes = await app.request('/api/stats');
+    expect(initialRes.status).toBe(200);
+    expect(initialRes.headers.get('cache-control')).toContain('s-maxage=30');
+    const initial = (await initialRes.json()) as {
+      totalPlanes: number;
+      totalUnfolds: number;
+      totalDistanceKm: number;
+      countriesCount: number;
+      planesToday: number;
+      mostUnfoldedReads: number;
+      updatedAt: string;
+    };
+
+    expect(initial.totalPlanes).toBeGreaterThan(0);
+    expect(initial.totalUnfolds).toBeGreaterThanOrEqual(initial.totalPlanes);
+    expect(initial.mostUnfoldedReads).toBeGreaterThan(0);
+    expect(Number.isNaN(Date.parse(initial.updatedAt))).toBe(false);
+
+    // Launch a new plane in a new country
+    const createRes = await app.request('/api/planes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-forwarded-for': '198.51.100.120',
+      },
+      body: JSON.stringify({
+        text: 'Milestone test plane drifting across the evening sky.',
+        biome: 'Lantern Shrine',
+        timeOfDay: 'evening',
+        paperTint: 'gold',
+        countryCode: 'CA',
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as { plane: { id: string } };
+
+    // Unfold it twice
+    for (let i = 0; i < 2; i++) {
+      const readRes = await app.request('/api/planes/read', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-forwarded-for': '198.51.100.120',
+        },
+        body: JSON.stringify({ id: created.plane.id }),
+      });
+      expect(readRes.status).toBe(200);
+    }
+
+    const freshRes = await app.request('/api/stats?fresh=1');
+    expect(freshRes.status).toBe(200);
+    expect(freshRes.headers.get('cache-control')).toBe('no-store');
+    const updated = (await freshRes.json()) as typeof initial;
+
+    expect(updated.totalPlanes).toBe(initial.totalPlanes + 1);
+    expect(updated.totalUnfolds).toBe(initial.totalUnfolds + 3);
+    expect(updated.planesToday).toBe(initial.planesToday + 1);
+    expect(updated.countriesCount).toBe(initial.countriesCount + 1);
+  });
 });
 
 describe('Environment validation', () => {

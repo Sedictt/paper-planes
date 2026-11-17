@@ -159,8 +159,6 @@ export function App() {
   // Compose Form State
   const [composeText, setComposeText] = useState('');
   const [composeTint, setComposeTint] = useState<PaperTint>('cream');
-  const [composeBiome, setComposeBiome] = useState('A-Frame Cottage');
-  const [composeCountry, setComposeCountry] = useState<string>('PH');
   const [composeError, setComposeError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -257,7 +255,6 @@ export function App() {
     fetchDetectedRegion().then((country) => {
       if (country) {
         setDetectedCountry(country);
-        setComposeCountry(country);
       }
     });
 
@@ -441,21 +438,25 @@ export function App() {
     const idempotencyKey = `launch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const prevPlanes = [...planes];
 
+    const launchBiome =
+      BIOME_SPOTS.find((spot) => spot.id === activeBiomeId)?.label ?? 'A-Frame Cottage';
+    const originCountry = detectedCountry ?? undefined;
+
     try {
       const saved = await launchNewPlane({
         text: trimmed,
-        biome: composeBiome,
+        biome: launchBiome,
         timeOfDay: activeTimeOfDay,
         paperTint: composeTint,
-        countryCode: composeCountry,
+        countryCode: originCountry,
         idempotencyKey,
       });
 
       soundscape.playPaperWhoosh('launch');
       soundscape.playUiSfx('success');
-      if (!selectedCountry || selectedCountry === composeCountry) {
+      if (!selectedCountry || selectedCountry === originCountry) {
         setPlanes([{ ...saved, isUserCreated: true }, ...prevPlanes].slice(0, 15));
-        if (selectedCountry === composeCountry) {
+        if (selectedCountry === originCountry) {
           setRegionFallbackCountry(null);
         }
       }
@@ -1382,7 +1383,7 @@ export function App() {
                 autoFocus
               />
 
-              {/* Paper Customization Row: Paper Tint & Launch Point */}
+              {/* Paper Customization Row: Paper Tint */}
               <div className="paper-controls-row">
                 <div className="tint-picker" role="radiogroup" aria-label="Paper Color">
                   {PAPER_TINTS.map((t) => (
@@ -1399,34 +1400,6 @@ export function App() {
                       aria-label={t.label}
                     />
                   ))}
-                </div>
-
-                <div className="paper-select-group">
-                  <select
-                    id="compose-biome-select"
-                    value={composeBiome}
-                    onChange={(e) => setComposeBiome(e.target.value)}
-                    className="paper-subtle-btn"
-                    aria-label="Launch Location"
-                  >
-                    <option value="A-Frame Cottage">From: Cottage</option>
-                    <option value="Campfire Terrace">From: Campfire</option>
-                    <option value="Frog Pot & Garden">From: Frog Garden</option>
-                    <option value="Waterfall Stream">From: Waterfall</option>
-                  </select>
-                  <select
-                    id="compose-country-select"
-                    value={composeCountry}
-                    onChange={(e) => setComposeCountry(e.target.value)}
-                    className="paper-subtle-btn"
-                    aria-label="Origin Country"
-                  >
-                    {countryOptions.map((opt) => (
-                      <option key={opt.code} value={opt.code}>
-                        {opt.name}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
 

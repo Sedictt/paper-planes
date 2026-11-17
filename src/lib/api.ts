@@ -1,4 +1,4 @@
-import type { PaperPlaneNote, PaperTint, TimeOfDay } from '../types';
+import type { PaperPlaneNote, PaperTint, SkyStats, TimeOfDay } from '../types';
 
 let activeFetchController: AbortController | null = null;
 let cachedPool: { timestamp: number; country: string; planes: PaperPlaneNote[]; fallbackUsed: boolean } | null =
@@ -190,4 +190,17 @@ export async function submitFeedback(input: SubmitFeedbackInput): Promise<{ ok: 
   }
 
   return { ok: true, delivered: Boolean(data.delivered) };
+}
+
+export async function fetchSkyStats(fresh = false): Promise<SkyStats> {
+  const res = await fetch(fresh ? '/api/stats?fresh=1' : '/api/stats', {
+    method: 'GET',
+    signal: AbortSignal.timeout(5000),
+  });
+
+  if (!res.ok) {
+    throw new Error('Could not load sky milestone stats.');
+  }
+
+  return (await res.json()) as SkyStats;
 }

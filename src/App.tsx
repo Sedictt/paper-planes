@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  BookOpen,
   Bug,
   Clock,
   Coffee,
   Compass,
   Flag,
+  LogOut,
   MessageSquare,
   MoreHorizontal,
   Music,
@@ -29,6 +31,17 @@ import { WorldFallback } from './components/WorldFallback';
 import { CustomCursor } from './components/CustomCursor';
 import { CountryCombobox } from './components/CountryCombobox';
 import { ShareCardModal } from './components/ShareCardModal';
+import { LoreCodexModal } from './components/LoreCodexModal';
+import {
+  advanceLoreSequence,
+  getInteriorPropContent,
+  LORE_CODEX_STORAGE_KEY,
+  OUTDOOR_PROP_HINTS,
+  pickFrogLine,
+  type InteractivePropId,
+  type InteriorPropId,
+  type LorePropId,
+} from './lib/lore';
 import { IsometricWorldEngine, PALETTES } from './engine/IsometricWorldEngine';
 import type { GraphicsQuality } from './engine/ThreeWorldEngine';
 import {
@@ -43,6 +56,7 @@ import {
   submitFeedback,
 } from './lib/api';
 import { getCountryName, getCountryOptions } from './lib/countries';
+import { getScheduledWeather } from './lib/weatherSchedule';
 import {
   MUSIC_TRACKS,
   soundscape,
@@ -60,20 +74,13 @@ import {
   type WeatherMode,
 } from './types';
 
-const FROG_LINES = [
-  'ribbit~',
-  'nice breeze today!',
-  'my duck floatie is ready.',
-  'i like my pink bow!',
-  'splish splash~',
-  'the shrine is so cozy...',
-  'did a wish fly by?',
-  '*happy frog noises*',
-  '10/10 pond vibes.',
-  'croak!',
-  'catching clouds today~',
-  'stay hydrated!',
-];
+interface ActivePropBubble {
+  propId: LorePropId;
+  title?: string;
+  text: string;
+  actionLabel?: string;
+  actionKind?: 'enter-cottage' | 'exit-cottage';
+}
 
 const TIME_OPTIONS: Array<{ id: TimeMode; label: string }> = [
   { id: 'auto', label: 'Sync with Local' },
@@ -108,7 +115,8 @@ export function App() {
   const [planes, setPlanes] = useState<PaperPlaneNote[]>([]);
   const [timeMode, setTimeMode] = useState<TimeMode>('auto');
   const [isTimeMenuOpen, setIsTimeMenuOpen] = useState(false);
-  const [weather, setWeather] = useState<WeatherMode>('clear');
+  const [weather, setWeather] = useState<WeatherMode>(() => getScheduledWeather());
+  const manualWeatherOverrideRef = useRef(false);
   const [fireworks, setFireworks] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1.05);
   const [activeBiomeId, setActiveBiomeId] = useState<string>('overview');
@@ -147,9 +155,22 @@ export function App() {
   const [bloomEnabled, setBloomEnabled] = useState(true);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
-  const [frogLine, setFrogLine] = useState<string | null>(null);
-  const frogBubbleRef = useRef<HTMLDivElement>(null);
-  const frogTimerRef = useRef<number | null>(null);
+  const [propBubble, setPropBubble] = useState<ActivePropBubble | null>(null);
+  const propBubbleRef = useRef<HTMLDivElement>(null);
+  const propTimerRef = useRef<number | null>(null);
+  const prevFrogLineRef = useRef<string | null>(null);
+  const loreStepRef = useRef<number>(0);
+  const draftIndexRef = useRef<number>(0);
+  const [isLoreCodexUnlocked, setIsLoreCodexUnlocked] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(LORE_CODEX_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isLoreCodexOpen, setIsLoreCodexOpen] = useState(false);
+  const [isInsideCottage, setIsInsideCottage] = useState(false);
+  const [isCottageTransitioning, setIsCottageTransitioning] = useState(false);
   const [isCmdOpen, setIsCmdOpen] = useState(false);
   const [cmdQuery, setCmdQuery] = useState('');
   const [cmdIndex, setCmdIndex] = useState(0);
@@ -202,10 +223,53 @@ export function App() {
     return () => window.clearInterval(id);
   }, [timeMode]);
 
+  // Keep weather synced to the randomized twice-daily schedule (unless manually toggled)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (manualWeatherOverrideRef.current) return;
+      const scheduled = getScheduledWeather();
+      setWeather((prev) => {
+        if (prev !== scheduled) {
+          soundscape.updateWeatherMix(scheduled);
+        }
+        return scheduled;
+      });
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const activeTimeOfDay: TimeOfDay = useMemo(
     () => (timeMode === 'auto' ? detectLocalTimeOfDay() : timeMode),
     [timeMode, autoTimeTick]
   );
+  const activeTimeRef = useRef<TimeOfDay>(activeTimeOfDay);
+  activeTimeRef.current = activeTimeOfDay;
+  const isInsideCottageRef = useRef<boolean>(isInsideCottage);
+  isInsideCottageRef.current = isInsideCottage;
+
+  const enterCottageWithFade = () => {
+    if (isCottageTransitioning || isInsideCottageRef.current) return;
+    setPropBubble(null);
+    setIsCottageTransitioning(true);
+    soundscape.playUiSfx('open');
+    window.setTimeout(() => {
+      engineRef.current?.enterCottage();
+      setIsInsideCottage(true);
+      window.setTimeout(() => setIsCottageTransitioning(false), 180);
+    }, 220);
+  };
+
+  const exitCottageWithFade = () => {
+    if (isCottageTransitioning || !isInsideCottageRef.current) return;
+    setPropBubble(null);
+    setIsCottageTransitioning(true);
+    soundscape.playUiSfx('close');
+    window.setTimeout(() => {
+      engineRef.current?.exitCottage();
+      setIsInsideCottage(false);
+      window.setTimeout(() => setIsCottageTransitioning(false), 180);
+    }, 220);
+  };
 
   const isMac = useMemo(
     () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform),
@@ -373,44 +437,87 @@ export function App() {
     });
   }, []);
 
-  // Frog NPC speech bubble: pops on frog click + occasional ambient line
+  // Interactive Lore Props, Frog NPC speech bubble & 4-step Sequence Easter Egg
   useEffect(() => {
-    const showFrogLine = () => {
-      setFrogLine((prev) => {
-        const pool = FROG_LINES.filter((l) => l !== prev);
-        return pool[Math.floor(Math.random() * pool.length)] ?? FROG_LINES[0];
-      });
-      if (frogTimerRef.current) window.clearTimeout(frogTimerRef.current);
-      frogTimerRef.current = window.setTimeout(() => setFrogLine(null), 3200);
+    const showBubble = (bubble: ActivePropBubble, durationMs = 4200) => {
+      setPropBubble(bubble);
+      if (propTimerRef.current) window.clearTimeout(propTimerRef.current);
+      propTimerRef.current = window.setTimeout(() => setPropBubble(null), durationMs);
     };
 
-    window.addEventListener('paperplanes:frog-click', showFrogLine);
+    const showFrogLine = () => {
+      const nextLine = pickFrogLine(activeTimeRef.current, prevFrogLineRef.current);
+      prevFrogLineRef.current = nextLine;
+      showBubble({ propId: 'frog', text: nextLine }, 3400);
+    };
+
+    const onPropClick = (e: Event) => {
+      const id = (e as CustomEvent<{ id?: LorePropId }>).detail?.id;
+      if (!id) return;
+
+      if (id === 'frog') {
+        showFrogLine();
+      } else if (id === 'campfire' || id === 'shrine' || id === 'waterfall' || id === 'cottage') {
+        const hint = OUTDOOR_PROP_HINTS[id as Exclude<InteractivePropId, 'frog'>];
+        showBubble({ propId: id, ...hint }, id === 'cottage' ? 5400 : 4400);
+      } else {
+        const interiorId = id as InteriorPropId;
+        const content = getInteriorPropContent(interiorId, draftIndexRef.current);
+        if (interiorId === 'drafts') {
+          draftIndexRef.current += 1;
+        }
+        showBubble({ propId: interiorId, ...content }, interiorId === 'door' ? 5200 : 4800);
+      }
+
+      // Advance 4-step chronological lore sequence
+      const seq = advanceLoreSequence(loreStepRef.current, id, activeTimeRef.current);
+      loreStepRef.current = seq.nextStep;
+      if (seq.unlocked) {
+        soundscape.playLoreUnlock();
+        engineRef.current?.triggerLanternWindSwell();
+        try {
+          window.localStorage.setItem(LORE_CODEX_STORAGE_KEY, 'true');
+        } catch {
+          // Ignore storage quota errors
+        }
+        setIsLoreCodexUnlocked(true);
+        window.setTimeout(() => {
+          setIsLoreCodexOpen(true);
+        }, 680);
+      } else if (seq.matched) {
+        soundscape.playLoreChime(seq.nextStep);
+      }
+    };
+
+    window.addEventListener('paperplanes:prop-click', onPropClick);
     const ambientId = window.setInterval(() => {
-      if (Math.random() < 0.65) showFrogLine();
+      if (!isInsideCottageRef.current && Math.random() < 0.65) {
+        showFrogLine();
+      }
     }, 24000);
 
     return () => {
-      window.removeEventListener('paperplanes:frog-click', showFrogLine);
+      window.removeEventListener('paperplanes:prop-click', onPropClick);
       window.clearInterval(ambientId);
-      if (frogTimerRef.current) window.clearTimeout(frogTimerRef.current);
+      if (propTimerRef.current) window.clearTimeout(propTimerRef.current);
     };
   }, []);
 
-  // Keep frog speech bubble anchored above the 3D frog while panning/zooming
+  // Keep prop speech bubble anchored above its 3D target while panning/zooming
   useEffect(() => {
-    if (!frogLine) return;
+    if (!propBubble) return;
     let rafId = 0;
     const syncPos = () => {
       rafId = requestAnimationFrame(syncPos);
-      const el = frogBubbleRef.current;
-      const pos = engineRef.current?.getFrogScreenPosition();
+      const el = propBubbleRef.current;
+      const pos = engineRef.current?.getPropScreenPosition(propBubble.propId);
       if (el && pos) {
         el.style.transform = `translate3d(${pos.x}px, ${pos.y - 10}px, 0) translate(-50%, -100%)`;
       }
     };
     syncPos();
     return () => cancelAnimationFrame(rafId);
-  }, [frogLine]);
+  }, [propBubble]);
 
   // Global Keyboard Shortcuts (Cmd+K / Ctrl+K, N to compose, Esc to close)
   useEffect(() => {
@@ -426,13 +533,26 @@ export function App() {
         return;
       }
       if (e.key === 'Escape') {
+        const hadModal =
+          selectedPlane ||
+          isComposeOpen ||
+          isSupportOpen ||
+          feedbackMode ||
+          isCmdOpen ||
+          isLoreCodexOpen ||
+          isTimeMenuOpen ||
+          isMusicMenuOpen;
         setSelectedPlane(null);
         setIsComposeOpen(false);
         setIsSupportOpen(false);
         setFeedbackMode(null);
         setIsCmdOpen(false);
+        setIsLoreCodexOpen(false);
         setIsTimeMenuOpen(false);
         setIsMusicMenuOpen(false);
+        if (!hadModal && isInsideCottageRef.current) {
+          exitCottageWithFade();
+        }
         return;
       }
 
@@ -601,6 +721,7 @@ export function App() {
   };
 
   const changeWeather = (w: WeatherMode) => {
+    manualWeatherOverrideRef.current = true;
     setWeather(w);
     soundscape.updateWeatherMix(w);
     soundscape.playUiSfx('select');
@@ -1004,7 +1125,7 @@ export function App() {
 
                     <div className="settings-section">
                       <div className="settings-row">
-                        <span className="settings-label">Wind &amp; Rain</span>
+                        <span className="settings-label">World Ambience</span>
                         <span className="settings-value tabular-nums">
                           {Math.round(ambienceVolume * 100)}%
                         </span>
@@ -1142,6 +1263,22 @@ export function App() {
             </div>
 
             {/* Primary CTA: Fold a Plane */}
+            {isLoreCodexUnlocked && (
+              <button
+                id="open-lore-codex-btn"
+                type="button"
+                onClick={() => {
+                  setIsLoreCodexOpen(true);
+                  soundscape.playUiSfx('open');
+                }}
+                className="icon-pill-btn hide-mobile"
+                title="Cathexis Lore Codex (Letter #0)"
+                aria-label="Open Cathexis Lore Codex"
+              >
+                <BookOpen size={14} />
+              </button>
+            )}
+
             <button
               id="open-compose-cta"
               type="button"
@@ -1878,14 +2015,52 @@ export function App() {
         )}
       </AnimatePresence>
 
-      {/* Frog NPC Floating Speech Bubble */}
+      {/* Cottage Interior Cross-Fade Scrim & Indoor HUD Pill */}
       <AnimatePresence>
-        {frogLine && (() => {
-          const initPos = engineRef.current?.getFrogScreenPosition();
+        {isCottageTransitioning && (
+          <motion.div
+            className="cottage-transition-scrim"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isInsideCottage && (
+          <motion.div
+            className="cottage-indoor-hud"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <span className="cottage-indoor-label">A-Frame Cottage · Interior</span>
+            <button
+              type="button"
+              className="cottage-exit-btn"
+              onClick={exitCottageWithFade}
+            >
+              <LogOut size={13} />
+              <span>Step Outside</span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <LoreCodexModal open={isLoreCodexOpen} onClose={() => setIsLoreCodexOpen(false)} />
+
+      {/* Interactive Prop & Frog NPC Floating Speech Bubble */}
+      <AnimatePresence>
+        {propBubble && (() => {
+          const initPos = engineRef.current?.getPropScreenPosition(propBubble.propId);
+          const hasAction = Boolean(propBubble.actionLabel && propBubble.actionKind);
           return (
             <div
-              ref={frogBubbleRef}
-              className="frog-speech-anchor"
+              ref={propBubbleRef}
+              className={`frog-speech-anchor ${hasAction ? 'interactive' : ''}`}
               aria-live="polite"
               style={
                 initPos
@@ -1894,14 +2069,32 @@ export function App() {
               }
             >
               <motion.div
-                key={frogLine}
-                className="frog-speech-bubble"
+                key={`${propBubble.propId}:${propBubble.text}`}
+                className={`frog-speech-bubble ${propBubble.title ? 'lore-bubble' : ''}`}
                 initial={{ opacity: 0, y: 6, scale: 0.88 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 4, scale: 0.92 }}
                 transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
               >
-                <span>{frogLine}</span>
+                {propBubble.title && (
+                  <span className="lore-bubble-title">{propBubble.title}</span>
+                )}
+                <span className="lore-bubble-text">{propBubble.text}</span>
+                {hasAction && (
+                  <button
+                    type="button"
+                    className="lore-bubble-action"
+                    onClick={() => {
+                      if (propBubble.actionKind === 'enter-cottage') {
+                        enterCottageWithFade();
+                      } else if (propBubble.actionKind === 'exit-cottage') {
+                        exitCottageWithFade();
+                      }
+                    }}
+                  >
+                    {propBubble.actionLabel}
+                  </button>
+                )}
               </motion.div>
             </div>
           );

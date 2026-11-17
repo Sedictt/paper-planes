@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Palette } from '../ThreeWorldEngine';
 import type { TimeOfDay, WeatherMode } from '../../types';
+import type { InteractivePropId } from '../../lib/lore';
 import { TILE_SPACING, ELEV_UNIT } from './TerrainBuilder';
 
 interface IslandCell {
@@ -54,11 +55,47 @@ export class FloatingIslandBuilder {
   private flames: THREE.Mesh[] = [];
   private fireLight!: THREE.PointLight;
   private shrineFrog?: THREE.Group;
+  private cottageGroup?: THREE.Group;
+  private campfireGroup?: THREE.Group;
+  private shrineGroup?: THREE.Group;
+  private waterfallMesh?: THREE.InstancedMesh;
+  private waterfallLocalCenter = new THREE.Vector3();
+  private cottagePorchLight?: THREE.PointLight;
   private frogMats: THREE.MeshLambertMaterial[] = [];
   private frogOutlineMat!: THREE.MeshBasicMaterial;
   private frogHovered = false;
   private frogHoverBlend = 0;
   private frogBounceTimer = 0;
+  private hoveredProp: InteractivePropId | null = null;
+  private propHoverBlend: Record<Exclude<InteractivePropId, 'frog'>, number> = {
+    campfire: 0,
+    shrine: 0,
+    waterfall: 0,
+    cottage: 0,
+  };
+  private propOutlineMats: Record<'campfire' | 'shrine' | 'cottage', THREE.MeshBasicMaterial | null> = {
+    campfire: null,
+    shrine: null,
+    cottage: null,
+  };
+  private propOutlines: Record<'campfire' | 'shrine' | 'cottage', THREE.Mesh[]> = {
+    campfire: [],
+    shrine: [],
+    cottage: [],
+  };
+  private propBaseY: Record<'campfire' | 'shrine' | 'cottage', number> = {
+    campfire: 0,
+    shrine: 0,
+    cottage: 0,
+  };
+  private propPulseTimers: Record<InteractivePropId, number> = {
+    frog: 0,
+    campfire: 0,
+    shrine: 0,
+    waterfall: 0,
+    cottage: 0,
+  };
+  private lanternSwellTimer = 0;
   private frogRaycaster = new THREE.Raycaster();
   private dummy = new THREE.Object3D();
   private campfireWorldPos = new THREE.Vector3();
@@ -291,17 +328,25 @@ export class FloatingIslandBuilder {
         transparent: true,
         depthWrite: false,
         side: THREE.DoubleSide,
-        uniforms: { uT: { value: 0 } },
+        uniforms: { uT: { value: 0 }, uPulse: { value: 0 } },
         vertexShader:
           'varying vec2 vU;void main(){vU=uv;gl_Position=projectionMatrix*viewMatrix*modelMatrix*instanceMatrix*vec4(position,1.);}',
-        fragmentShader: `uniform float uT;varying vec2 vU;void main(){float st=sin(vU.x*40.+sin(vU.y*6.)*2.)*.5+.5;float fl=sin(vU.y*22.+uT*6.+vU.x*5.)*.5+.5;
-          vec3 c=mix(vec3(.2,.8,.92),vec3(.95,1.,1.),fl*st);gl_FragColor=vec4(c,smoothstep(0.,.45,vU.y)*(.55+.35*fl));}`,
+        fragmentShader: `uniform float uT;uniform float uPulse;varying vec2 vU;void main(){float st=sin(vU.x*40.+sin(vU.y*6.)*2.)*.5+.5;float fl=sin(vU.y*22.+uT*6.+vU.x*5.)*.5+.5;
+          vec3 c=mix(vec3(.2,.8,.92),vec3(.95,1.,1.),fl*st);c+=vec3(.45,.88,1.)*uPulse*.45;gl_FragColor=vec4(c,smoothstep(0.,.45,vU.y)*(.55+.35*fl+uPulse*.18));}`,
       })
     );
     if (falls.length > 0) {
       const wf = inst(new THREE.PlaneGeometry(1, 5), this.fallMat, falls.length);
-      falls.forEach((o, i) => put(wf, i, o.x + 0.53, -2.8, o.z, 0, Math.PI / 2, 0));
+      let sumX = 0;
+      let sumZ = 0;
+      falls.forEach((o, i) => {
+        put(wf, i, o.x + 0.53, -2.8, o.z, 0, Math.PI / 2, 0);
+        sumX += o.x + 0.53;
+        sumZ += o.z;
+      });
       wf.instanceMatrix.needsUpdate = true;
+      this.waterfallMesh = wf;
+      this.waterfallLocalCenter.set(sumX / falls.length, -1.0, sumZ / falls.length);
     }
 
     // 3. Stone Props in Pool
@@ -573,6 +618,8 @@ export class FloatingIslandBuilder {
     // Cottage
     {
       const g = G(-6.4, -3.8);
+      this.cottageGroup = g;
+      this.propBaseY.cottage = g.position.y;
       const W = 0xf4efe6;
       const Tm = 0xc97a4a;
       box(2.4, 0.18, 2.8, 0xb8b0a8, 0, 0.09, 0, g);
@@ -608,6 +655,7 @@ export class FloatingIslandBuilder {
       const cottageLight = new THREE.PointLight(0xffb454, 45, 175, 1.35);
       cottageLight.position.set(0.15, 1.35, 2.05);
       g.add(cottageLight);
+      this.cottagePorchLight = cottageLight;
       this.nightLights.push(cottageLight);
       addVolumetricCone(g, 0.15, 0.8, 1.85, 1.05, 1.5);
       for (const s of [-1, 1]) {
@@ -665,6 +713,8 @@ export class FloatingIslandBuilder {
     // Detailed Glowing Campfire + Stumps
     {
       const g = G(-7, 2.8);
+      this.campfireGroup = g;
+      this.propBaseY.campfire = g.position.y;
       // Charred ash pit & glowing ember bed
       cyl(0.76, 0.04, 0x3b2a22, 0, 0.025, 0, g);
       const emberMat = this.trackMat(new THREE.MeshBasicMaterial({ color: 0xff5a1f }));
@@ -1172,6 +1222,8 @@ export class FloatingIslandBuilder {
     shrineGroup.name = 'LanternShrineCenterpiece';
     shrineGroup.position.set(cx, 0, cz);
     this.islandPivot.add(shrineGroup);
+    this.shrineGroup = shrineGroup;
+    this.propBaseY.shrine = shrineGroup.position.y;
 
     const matCache = new Map<number, THREE.MeshLambertMaterial>();
     const getMat = (hex: number): THREE.MeshLambertMaterial => {
@@ -1525,6 +1577,112 @@ export class FloatingIslandBuilder {
     fBox(0.12, 0.12, 0.12, BOW_DARK, 0.08, 0.96, -0.02);
     fBox(0.18, 0.18, 0.1, BOW_PINK, -0.06, 1.0, -0.02, 0.25);
     fBox(0.18, 0.18, 0.1, BOW_PINK, 0.22, 0.94, -0.02, -0.25);
+
+    this.initInteractivePropHighlights();
+  }
+
+  private initInteractivePropHighlights(): void {
+    const setupOutline = (
+      key: 'campfire' | 'shrine' | 'cottage',
+      group: THREE.Group | undefined,
+      stencilRef: number,
+      exclude?: THREE.Object3D
+    ) => {
+      if (!group) return;
+      const outlineMat = this.trackMat(
+        new THREE.MeshBasicMaterial({
+          color: 0xfff3a8,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          stencilWrite: true,
+          stencilRef,
+          stencilFunc: THREE.NotEqualStencilFunc,
+        })
+      );
+      this.propOutlineMats[key] = outlineMat;
+
+      const cloneMap = new Map<THREE.Material, THREE.Material>();
+      const targetMeshes: THREE.Mesh[] = [];
+
+      const walk = (node: THREE.Object3D) => {
+        if (exclude && node === exclude) return;
+        if (node instanceof THREE.Mesh && !node.userData.isPropOutline) {
+          if (node.material !== this.volumetricGlowMat) {
+            targetMeshes.push(node);
+          }
+        }
+        for (const child of node.children) {
+          walk(child);
+        }
+      };
+      walk(group);
+
+      for (const mesh of targetMeshes) {
+        const origMat = mesh.material;
+        if (!Array.isArray(origMat)) {
+          let cloned = cloneMap.get(origMat);
+          if (!cloned) {
+            cloned = origMat.clone();
+            cloned.stencilWrite = true;
+            cloned.stencilRef = stencilRef;
+            cloned.stencilFunc = THREE.AlwaysStencilFunc;
+            cloned.stencilZPass = THREE.ReplaceStencilOp;
+            cloned.stencilFail = THREE.KeepStencilOp;
+            cloned.stencilZFail = THREE.KeepStencilOp;
+            this.materials.add(cloned);
+            cloneMap.set(origMat, cloned);
+            if (origMat === this.cottageWindowMat) {
+              this.cottageWindowMat = cloned as THREE.MeshLambertMaterial;
+            } else if (origMat === this.lanternGlowMat) {
+              this.lanternGlowMat = cloned as THREE.MeshLambertMaterial;
+            }
+          }
+          mesh.material = cloned;
+          mesh.renderOrder = 49;
+        }
+
+        let outlineGeo: THREE.BufferGeometry;
+        let useUniformScale = false;
+        if (mesh.geometry instanceof THREE.BoxGeometry) {
+          const { width, height, depth } = mesh.geometry.parameters;
+          outlineGeo = this.trackGeo(
+            new THREE.BoxGeometry(width + 0.08, height + 0.08, depth + 0.08)
+          );
+        } else if (mesh.geometry instanceof THREE.CylinderGeometry) {
+          const { radiusTop, radiusBottom, height, radialSegments } = mesh.geometry.parameters;
+          outlineGeo = this.trackGeo(
+            new THREE.CylinderGeometry(
+              radiusTop + 0.04,
+              radiusBottom + 0.04,
+              height + 0.07,
+              radialSegments
+            )
+          );
+        } else {
+          outlineGeo = mesh.geometry;
+          useUniformScale = true;
+        }
+
+        const outline = new THREE.Mesh(outlineGeo, outlineMat);
+        outline.position.copy(mesh.position);
+        outline.rotation.copy(mesh.rotation);
+        outline.scale.copy(mesh.scale);
+        if (useUniformScale) {
+          outline.scale.multiplyScalar(1.07);
+        }
+        outline.visible = false;
+        outline.renderOrder = 50;
+        outline.raycast = () => {};
+        outline.userData.isPropOutline = true;
+        mesh.parent?.add(outline);
+        this.propOutlines[key].push(outline);
+      }
+    };
+
+    setupOutline('campfire', this.campfireGroup, 2);
+    setupOutline('cottage', this.cottageGroup, 3);
+    setupOutline('shrine', this.shrineGroup, 4, this.shrineFrog);
   }
 
   private syncLanternIntensity(): void {
@@ -1631,9 +1789,123 @@ export class FloatingIslandBuilder {
     });
 
     this.flames.forEach((f, i) => {
-      f.scale.y = 1 + Math.sin(elapsed * 9 + i * 2) * 0.2;
+      const firePulse =
+        this.propPulseTimers.campfire > 0
+          ? Math.sin((1 - this.propPulseTimers.campfire / 0.75) * Math.PI) * 0.45
+          : 0;
+      const fireHover = this.hoveredProp === 'campfire' ? 0.14 : 0;
+      f.scale.y = 1 + Math.sin(elapsed * 9 + i * 2) * 0.2 + firePulse + fireHover;
     });
-    this.fireLight.intensity = 120 + Math.sin(elapsed * 11) * 35;
+
+    // Decay interactive prop pulses & hover highlights
+    const pulseKeys: Exclude<InteractivePropId, 'frog'>[] = [
+      'campfire',
+      'shrine',
+      'waterfall',
+      'cottage',
+    ];
+    for (const key of pulseKeys) {
+      if (this.propPulseTimers[key] > 0) {
+        this.propPulseTimers[key] = Math.max(0, this.propPulseTimers[key] - dt);
+      }
+      const targetHover = this.hoveredProp === key ? 1 : 0;
+      this.propHoverBlend[key] += (targetHover - this.propHoverBlend[key]) * Math.min(1, dt * 12);
+    }
+    if (this.lanternSwellTimer > 0) {
+      this.lanternSwellTimer = Math.max(0, this.lanternSwellTimer - dt);
+    }
+
+    const applyPropAnim = (key: 'campfire' | 'shrine' | 'cottage', group?: THREE.Group) => {
+      if (!group) return;
+      const hover = this.propHoverBlend[key];
+      const timer = this.propPulseTimers[key];
+      const baseY = this.propBaseY[key];
+      const baseScale = 1 + hover * 0.045;
+
+      let clickGlow = 0;
+      if (timer > 0) {
+        const progress = 1 - timer / 0.65;
+        const decay = Math.exp(-progress * 4.5);
+        const squash = Math.sin(progress * Math.PI * 3.0) * decay;
+        const hop = Math.abs(Math.sin(progress * Math.PI * 1.8)) * decay;
+        group.scale.set(
+          baseScale * (1 - squash * 0.07),
+          baseScale * (1 + squash * 0.12),
+          baseScale * (1 - squash * 0.07)
+        );
+        group.position.y = baseY + hop * 0.24;
+        clickGlow = Math.sin(progress * Math.PI) * 0.48;
+      } else {
+        group.scale.setScalar(baseScale);
+        group.position.y = baseY;
+      }
+
+      const outlineAlpha = Math.max(hover, clickGlow);
+      const outlineMat = this.propOutlineMats[key];
+      if (outlineMat) {
+        outlineMat.opacity = outlineAlpha;
+      }
+      const showOutline = outlineAlpha > 0.01;
+      for (const outline of this.propOutlines[key]) {
+        outline.visible = showOutline;
+      }
+    };
+
+    applyPropAnim('campfire', this.campfireGroup);
+    applyPropAnim('cottage', this.cottageGroup);
+    applyPropAnim('shrine', this.shrineGroup);
+
+    const swell =
+      this.lanternSwellTimer > 0
+        ? Math.sin((1 - this.lanternSwellTimer / 2.6) * Math.PI)
+        : 0;
+    const firePulseBoost =
+      (this.propPulseTimers.campfire > 0
+        ? Math.sin((1 - this.propPulseTimers.campfire / 0.65) * Math.PI) * 140
+        : 0) +
+      this.propHoverBlend.campfire * 45 +
+      swell * 110;
+    this.fireLight.intensity = 120 + Math.sin(elapsed * 11) * 35 + firePulseBoost;
+
+    if (this.fallMat) {
+      const wfPulse =
+        (this.propPulseTimers.waterfall > 0
+          ? Math.sin((1 - this.propPulseTimers.waterfall / 0.65) * Math.PI) * 1.35
+          : 0) +
+        this.propHoverBlend.waterfall * 0.65;
+      this.fallMat.uniforms.uPulse.value = wfPulse;
+    }
+
+    if (this.cottageWindowMat) {
+      const baseEmissive = this.isDarkTime ? 1.25 : 0.08;
+      const cottageBoost =
+        (this.propPulseTimers.cottage > 0
+          ? Math.sin((1 - this.propPulseTimers.cottage / 0.65) * Math.PI) * 1.25
+          : 0) +
+        this.propHoverBlend.cottage * 0.65;
+      this.cottageWindowMat.emissiveIntensity = baseEmissive + cottageBoost;
+      if (this.cottagePorchLight) {
+        const basePorch =
+          25 + ((this.isDarkTime ? 1.0 : 0.0) + (this.isWetOrColdWeather ? 0.65 : 0.0)) * 145;
+        this.cottagePorchLight.intensity = basePorch + cottageBoost * 95;
+      }
+    }
+
+    if (this.shrineLight && this.lanternGlowMat) {
+      const boost = (this.isDarkTime ? 1.0 : 0.0) + (this.isWetOrColdWeather ? 0.65 : 0.0);
+      const shrinePulse =
+        (this.propPulseTimers.shrine > 0
+          ? Math.sin((1 - this.propPulseTimers.shrine / 0.65) * Math.PI) * 1.25
+          : 0) +
+        this.propHoverBlend.shrine * 0.5 +
+        swell * 2.2;
+      this.lanternGlowMat.emissiveIntensity = 1.35 + boost * 1.1 + shrinePulse;
+      this.shrineLight.intensity = 90 + boost * 140 + shrinePulse * 145;
+      if (this.volumetricGlowMat) {
+        this.volumetricGlowMat.uniforms.uIntensity.value =
+          (0.1 + boost * 0.28 + shrinePulse * 0.22) * this.volumetricScale;
+      }
+    }
   }
 
   public setPalette(pal: Palette): void {
@@ -1675,34 +1947,100 @@ export class FloatingIslandBuilder {
     this.syncLanternIntensity();
   }
 
+  public pickInteractivePropAt(
+    clientX: number,
+    clientY: number,
+    canvas: HTMLCanvasElement,
+    camera: THREE.Camera
+  ): InteractivePropId | null {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
+    this.frogRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+
+    // Check frog before shrine because shrineFrog is a child of shrineGroup
+    const targets: Array<[InteractivePropId, THREE.Object3D | undefined]> = [
+      ['frog', this.shrineFrog],
+      ['campfire', this.campfireGroup],
+      ['cottage', this.cottageGroup],
+      ['shrine', this.shrineGroup],
+      ['waterfall', this.waterfallMesh],
+    ];
+    for (const [id, obj] of targets) {
+      if (obj && this.frogRaycaster.intersectObject(obj, true).length > 0) {
+        return id;
+      }
+    }
+    return null;
+  }
+
+  public setHoveredProp(propId: InteractivePropId | null): void {
+    this.hoveredProp = propId;
+    this.frogHovered = propId === 'frog';
+  }
+
+  public triggerPropPulse(propId: InteractivePropId): void {
+    if (propId === 'frog') {
+      this.frogBounceTimer = 0.65;
+    } else {
+      this.propPulseTimers[propId] = 0.65;
+    }
+  }
+
+  public triggerLanternWindSwell(): void {
+    this.lanternSwellTimer = 2.6;
+  }
+
+  public getPropWorldPosition(propId: InteractivePropId, out: THREE.Vector3): boolean {
+    if (propId === 'frog') {
+      if (!this.shrineFrog) return false;
+      this.shrineFrog.getWorldPosition(out);
+      out.y += 1.25 * 0.72 * this.islandScale;
+      return true;
+    }
+    if (propId === 'campfire' && this.campfireGroup) {
+      this.campfireGroup.getWorldPosition(out);
+      out.y += 1.45 * this.islandScale;
+      return true;
+    }
+    if (propId === 'cottage' && this.cottageGroup) {
+      this.cottageGroup.getWorldPosition(out);
+      out.y += 3.3 * this.islandScale;
+      return true;
+    }
+    if (propId === 'shrine' && this.shrineGroup) {
+      this.shrineGroup.getWorldPosition(out);
+      out.y += 3.25 * this.islandScale;
+      return true;
+    }
+    if (propId === 'waterfall' && this.waterfallMesh) {
+      out.copy(this.waterfallLocalCenter).applyMatrix4(this.islandPivot.matrixWorld);
+      out.y += 1.6 * this.islandScale;
+      return true;
+    }
+    return false;
+  }
+
   public pickFrogAt(
     clientX: number,
     clientY: number,
     canvas: HTMLCanvasElement,
     camera: THREE.Camera
   ): boolean {
-    if (!this.shrineFrog) return false;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return false;
-    const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
-    this.frogRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
-    return this.frogRaycaster.intersectObject(this.shrineFrog, true).length > 0;
+    return this.pickInteractivePropAt(clientX, clientY, canvas, camera) === 'frog';
   }
 
   public setFrogHovered(hovered: boolean): void {
-    this.frogHovered = hovered;
+    this.setHoveredProp(hovered ? 'frog' : null);
   }
 
   public triggerFrogBounce(): void {
-    this.frogBounceTimer = 0.65;
+    this.triggerPropPulse('frog');
   }
 
   public getFrogWorldPosition(out: THREE.Vector3): boolean {
-    if (!this.shrineFrog) return false;
-    this.shrineFrog.getWorldPosition(out);
-    out.y += 1.25 * 0.72 * this.islandScale;
-    return true;
+    return this.getPropWorldPosition('frog', out);
   }
 
   public getCampfirePosition(): THREE.Vector3 {

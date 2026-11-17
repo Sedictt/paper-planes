@@ -2,10 +2,12 @@ import * as THREE from 'three';
 import type { PaperPlaneNote, TimeOfDay, WeatherMode } from '../types';
 import { IsometricCamera } from './camera/IsometricCamera';
 import { DioramaWorld } from './world/DioramaWorld';
+import { CottageInteriorBuilder } from './world/CottageInteriorBuilder';
 import { BackgroundEnvironmentGroup } from './world/BackgroundEnvironmentGroup';
 import { AtmosphereEffects } from './effects/AtmosphereEffects';
 import { PaperPlaneSystem } from './entities/PaperPlaneSystem';
 import { soundscape } from '../lib/soundscape';
+import type { InteractivePropId, InteriorPropId } from '../lib/lore';
 
 export type { TimeOfDay, WeatherMode, PaperPlaneNote };
 export type GraphicsQuality = 'low' | 'medium' | 'high';
@@ -231,6 +233,11 @@ export class ThreeWorldEngine {
   private cameraCtrl: IsometricCamera;
   private worldGroup: THREE.Group;
   private diorama: DioramaWorld | null = null;
+  private cottageInterior: CottageInteriorBuilder | null = null;
+  private insideCottage = false;
+  private savedOutdoorCam = { camX: 0, camY: -175, zoom: 1.6 };
+  private cutsceneLocked = false;
+  private savedCutsceneCam = { camX: 0, camY: -175, zoom: 1.6 };
   private atmosphere: AtmosphereEffects | null = null;
   private planeSystem: PaperPlaneSystem | null = null;
 
@@ -390,6 +397,9 @@ export class ThreeWorldEngine {
     this.planeSystem = new PaperPlaneSystem((gx, gy) => this.getSurfaceElevation(gx, gy));
     this.worldGroup.add(this.planeSystem.group);
 
+    this.cottageInterior = new CottageInteriorBuilder(this._timeOfDay);
+    this.worldGroup.add(this.cottageInterior.group);
+
     // 3. Initialize Lighting (matched to floating-island.html in Three.js r187 physical units)
     this.ambientLight = new THREE.AmbientLight(0xcfeaff, 0.15);
     this.scene.add(this.ambientLight);
@@ -490,6 +500,7 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
 
     this.scene.background = new THREE.Color(pal.skyMid);
     this.backgroundEnv?.setTimeOfDay(this._timeOfDay);
+    this.cottageInterior?.setTimeOfDay(this._timeOfDay);
     const isNight = this._timeOfDay === 'midnight' || this._timeOfDay === 'evening';
 
     if (this.ambientLight) {
@@ -585,10 +596,12 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
 
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault();
+    if (this.cutsceneLocked) return;
     this.cameraCtrl.adjustZoom(e.deltaY < 0 ? 0.15 : -0.15);
   };
 
   private onMouseDown = (e: MouseEvent): void => {
+    if (this.cutsceneLocked) return;
     this.cameraCtrl.stopMomentum();
     this.isDragging = true;
     this.dragMoved = false;
@@ -597,6 +610,11 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
   };
 
   private onMouseMove = (e: MouseEvent): void => {
+    if (this.cutsceneLocked) {
+      this.canvas.style.cursor = 'default';
+      delete this.canvas.dataset.hoverTarget;
+      return;
+    }
     if (this.isDragging) {
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
@@ -605,6 +623,22 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
       }
       this.cameraCtrl.panByScreenDelta(dx, dy, this.canvas.clientWidth, this.canvas.clientHeight);
       this.dragStart = { x: e.clientX, y: e.clientY };
+      return;
+    }
+
+    if (this.insideCottage) {
+      const interiorHit =
+        this.cottageInterior?.pickPropAt(e.clientX, e.clientY, this.canvas, this.cameraCtrl.camera) ??
+        null;
+      this.cottageInterior?.setHoveredProp(interiorHit);
+      this.diorama?.setHoveredProp(null);
+      if (interiorHit) {
+        this.canvas.style.cursor = 'pointer';
+        this.canvas.dataset.hoverTarget = interiorHit;
+      } else {
+        this.canvas.style.cursor = 'grab';
+        delete this.canvas.dataset.hoverTarget;
+      }
       return;
     }
 
@@ -617,19 +651,22 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
         false
       );
       this.planeSystem.hoveredPlane = hit;
-      const frogHit =
-        !hit &&
-        Boolean(
-          this.diorama?.pickFrogAt(e.clientX, e.clientY, this.canvas, this.cameraCtrl.camera)
-        );
-      this.diorama?.setFrogHovered(frogHit);
+      const propHit = !hit
+        ? this.diorama?.pickInteractivePropAt(
+            e.clientX,
+            e.clientY,
+            this.canvas,
+            this.cameraCtrl.camera
+          ) ?? null
+        : null;
+      this.diorama?.setHoveredProp(propHit);
 
       if (hit) {
         this.canvas.style.cursor = 'pointer';
         this.canvas.dataset.hoverTarget = 'plane';
-      } else if (frogHit) {
+      } else if (propHit) {
         this.canvas.style.cursor = 'pointer';
-        this.canvas.dataset.hoverTarget = 'frog';
+        this.canvas.dataset.hoverTarget = propHit;
       } else {
         this.canvas.style.cursor = 'grab';
         delete this.canvas.dataset.hoverTarget;
@@ -641,8 +678,33 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
     this.isDragging = false;
   };
 
+  private handleInteractivePropClick(propHit: InteractivePropId): void {
+    this.diorama?.triggerPropPulse(propHit);
+    if (propHit === 'frog') {
+      soundscape.playFrogRibbit();
+      window.dispatchEvent(new CustomEvent('paperplanes:frog-click'));
+    }
+    window.dispatchEvent(new CustomEvent('paperplanes:prop-click', { detail: { id: propHit } }));
+  }
+
   private onClick = (e: MouseEvent): void => {
-    if (this.dragMoved) return;
+    if (this.dragMoved || this.cutsceneLocked) return;
+    if (this.insideCottage) {
+      const interiorHit = this.cottageInterior?.pickPropAt(
+        e.clientX,
+        e.clientY,
+        this.canvas,
+        this.cameraCtrl.camera
+      );
+      if (interiorHit) {
+        this.cottageInterior?.triggerPropPulse(interiorHit);
+        window.dispatchEvent(
+          new CustomEvent('paperplanes:prop-click', { detail: { id: interiorHit } })
+        );
+      }
+      return;
+    }
+
     if (this.planeSystem) {
       const hit = this.planeSystem.pickPlaneAt(
         e.clientX,
@@ -656,14 +718,19 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
         return;
       }
     }
-    if (this.diorama?.pickFrogAt(e.clientX, e.clientY, this.canvas, this.cameraCtrl.camera)) {
-      this.diorama.triggerFrogBounce();
-      soundscape.playFrogRibbit();
-      window.dispatchEvent(new CustomEvent('paperplanes:frog-click'));
+    const propHit = this.diorama?.pickInteractivePropAt(
+      e.clientX,
+      e.clientY,
+      this.canvas,
+      this.cameraCtrl.camera
+    );
+    if (propHit) {
+      this.handleInteractivePropClick(propHit);
     }
   };
 
   private onTouchStart = (e: TouchEvent): void => {
+    if (this.cutsceneLocked) return;
     this.cameraCtrl.stopMomentum();
     if (e.touches.length === 2) {
       this.isDragging = false;
@@ -732,21 +799,40 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
       this.planeSystem
     ) {
       const t = e.changedTouches[0];
-      const hit = this.planeSystem.pickPlaneAt(
-        t.clientX,
-        t.clientY,
-        this.canvas,
-        this.cameraCtrl.camera,
-        true
-      );
-      if (hit) {
-        this.onSelectPlane(hit.note);
-      } else if (
-        this.diorama?.pickFrogAt(t.clientX, t.clientY, this.canvas, this.cameraCtrl.camera)
-      ) {
-        this.diorama.triggerFrogBounce();
-        soundscape.playFrogRibbit();
-        window.dispatchEvent(new CustomEvent('paperplanes:frog-click'));
+      if (this.insideCottage) {
+        const interiorHit = this.cottageInterior?.pickPropAt(
+          t.clientX,
+          t.clientY,
+          this.canvas,
+          this.cameraCtrl.camera
+        );
+        if (interiorHit) {
+          this.cottageInterior?.triggerPropPulse(interiorHit);
+          window.dispatchEvent(
+            new CustomEvent('paperplanes:prop-click', { detail: { id: interiorHit } })
+          );
+        }
+      } else {
+        const hit = this.planeSystem.pickPlaneAt(
+          t.clientX,
+          t.clientY,
+          this.canvas,
+          this.cameraCtrl.camera,
+          true
+        );
+        if (hit) {
+          this.onSelectPlane(hit.note);
+        } else {
+          const propHit = this.diorama?.pickInteractivePropAt(
+            t.clientX,
+            t.clientY,
+            this.canvas,
+            this.cameraCtrl.camera
+          );
+          if (propHit) {
+            this.handleInteractivePropClick(propHit);
+          }
+        }
       }
     } else if (this.dragMoved && performance.now() - this.lastTouchTime < 90) {
       this.cameraCtrl.setPanVelocity(
@@ -807,10 +893,91 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
     this.atmosphere?.triggerFireworkVolley();
   }
 
-  public getFrogScreenPosition(): { x: number; y: number } | null {
-    if (!this.diorama) return null;
+  public triggerLanternWindSwell(): void {
+    this.diorama?.triggerLanternWindSwell();
+  }
+
+  public enterFrogCutscene(): void {
+    if (this.insideCottage) {
+      this.exitCottage();
+    }
+    this.savedCutsceneCam = {
+      camX: this.cameraCtrl.camX,
+      camY: this.cameraCtrl.camY,
+      zoom: this.cameraCtrl.zoom,
+    };
+    this.cutsceneLocked = true;
+    this.isDragging = false;
+    this.diorama?.setHoveredProp(null);
+    const frogPos = new THREE.Vector3();
+    if (this.diorama?.getPropWorldPosition('frog', frogPos)) {
+      this.cameraCtrl.focusWorldPoint(frogPos, 10.5, -14);
+    } else {
+      this.cameraCtrl.focusBiome(6.2, 6.2, 4.5, 18);
+    }
+    this.diorama?.triggerPropPulse('frog');
+    soundscape.playFrogRibbit();
+  }
+
+  public exitFrogCutscene(): void {
+    if (!this.cutsceneLocked) return;
+    this.cutsceneLocked = false;
+    this.cameraCtrl.targetCamX = this.savedCutsceneCam.camX;
+    this.cameraCtrl.targetCamY = this.savedCutsceneCam.camY;
+    this.cameraCtrl.targetZoom = this.savedCutsceneCam.zoom;
+  }
+
+  public pulseFrogInCutscene(): void {
+    this.diorama?.triggerPropPulse('frog');
+    soundscape.playFrogRibbit();
+  }
+
+  public isInsideCottage(): boolean {
+    return this.insideCottage;
+  }
+
+  public enterCottage(): void {
+    if (this.insideCottage || !this.cottageInterior || !this.diorama) return;
+    this.savedOutdoorCam = {
+      camX: this.cameraCtrl.camX,
+      camY: this.cameraCtrl.camY,
+      zoom: this.cameraCtrl.zoom,
+    };
+    this.insideCottage = true;
+    this.diorama.group.visible = false;
+    if (this.planeSystem) this.planeSystem.group.visible = false;
+    if (this.atmosphere) this.atmosphere.group.visible = false;
+    this.cottageInterior.group.visible = true;
+    this.cameraCtrl.focusBiome(5.5, 5.5, 1.85, 26);
+    soundscape.setIndoorMuffled(true);
+    window.dispatchEvent(new CustomEvent('paperplanes:cottage-state', { detail: { inside: true } }));
+  }
+
+  public exitCottage(): void {
+    if (!this.insideCottage || !this.cottageInterior || !this.diorama) return;
+    this.insideCottage = false;
+    this.cottageInterior.group.visible = false;
+    this.diorama.group.visible = true;
+    if (this.planeSystem) this.planeSystem.group.visible = true;
+    if (this.atmosphere) this.atmosphere.group.visible = true;
+    this.cameraCtrl.targetCamX = this.savedOutdoorCam.camX;
+    this.cameraCtrl.targetCamY = this.savedOutdoorCam.camY;
+    this.cameraCtrl.targetZoom = this.savedOutdoorCam.zoom;
+    soundscape.setIndoorMuffled(false);
+    window.dispatchEvent(new CustomEvent('paperplanes:cottage-state', { detail: { inside: false } }));
+  }
+
+  public getPropScreenPosition(propId: string): { x: number; y: number } | null {
     const worldPos = new THREE.Vector3();
-    if (!this.diorama.getFrogWorldPosition(worldPos)) return null;
+    let ok = false;
+    if (this.insideCottage) {
+      if (!this.cottageInterior) return null;
+      ok = this.cottageInterior.getPropWorldPosition(propId as InteriorPropId, worldPos);
+    } else {
+      if (!this.diorama) return null;
+      ok = this.diorama.getPropWorldPosition(propId as InteractivePropId, worldPos);
+    }
+    if (!ok) return null;
     worldPos.project(this.cameraCtrl.camera);
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
@@ -818,6 +985,10 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
       x: rect.left + (worldPos.x * 0.5 + 0.5) * rect.width,
       y: rect.top + (-worldPos.y * 0.5 + 0.5) * rect.height,
     };
+  }
+
+  public getFrogScreenPosition(): { x: number; y: number } | null {
+    return this.getPropScreenPosition('frog');
   }
 
   public captureSnapshotDataUrl(): string | null {
@@ -922,10 +1093,18 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
 
   private update(dt: number): void {
     this.cameraCtrl.update(dt);
+    soundscape.updateCameraLocation(
+      -this.cameraCtrl.camX,
+      -this.cameraCtrl.camY,
+      this.cameraCtrl.zoom,
+      this._timeOfDay
+    );
 
-    // Ramp tilt-shift bokeh strength smoothly as the user zooms in past 1.55x
+    // Ramp tilt-shift bokeh strength smoothly as the user zooms in past 1.55x (keep crisp during frog cutscene)
     const k = Math.min(1, Math.max(0, (this.cameraCtrl.zoom - 1.55) / (2.6 - 1.55)));
-    this.postMat.uniforms.str.value = this.tiltShiftMax * (k * k * (3 - 2 * k));
+    this.postMat.uniforms.str.value = this.cutsceneLocked
+      ? 0.15
+      : this.tiltShiftMax * (k * k * (3 - 2 * k));
 
     const elapsed = performance.now() / 1000;
     this.backgroundEnv?.update(dt, elapsed, this.cameraCtrl.camera, this.cameraCtrl.zoom);
@@ -936,6 +1115,7 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
       this.postMat.uniforms.uRayStr.value = rayCfg.strength * this.volumetricScale;
     }
     this.diorama?.update(dt, elapsed);
+    this.cottageInterior?.update(dt, elapsed);
     this.atmosphere?.update(dt, elapsed, this.fireworksActive);
     this.planeSystem?.update(dt, elapsed);
   }
@@ -990,6 +1170,11 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
     if (this.diorama) {
       this.diorama.dispose();
       this.diorama = null;
+    }
+
+    if (this.cottageInterior) {
+      this.cottageInterior.dispose();
+      this.cottageInterior = null;
     }
 
     if (this.backgroundEnv) {

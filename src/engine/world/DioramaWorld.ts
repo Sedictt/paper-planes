@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Palette } from '../ThreeWorldEngine';
 import type { TimeOfDay, WeatherMode } from '../../types';
+import type { InteractivePropId } from '../../lib/lore';
 import { TerrainBuilder } from './TerrainBuilder';
 import { PropBuilder } from './PropBuilder';
 import { WaterSystem } from './WaterSystem';
@@ -92,6 +93,31 @@ export class DioramaWorld {
 
   public setVolumetricScale(scale: number): void {
     this.island.setVolumetricScale(scale);
+  }
+
+  public pickInteractivePropAt(
+    clientX: number,
+    clientY: number,
+    canvas: HTMLCanvasElement,
+    camera: THREE.Camera
+  ): InteractivePropId | null {
+    return this.island.pickInteractivePropAt(clientX, clientY, canvas, camera);
+  }
+
+  public setHoveredProp(propId: InteractivePropId | null): void {
+    this.island.setHoveredProp(propId);
+  }
+
+  public triggerPropPulse(propId: InteractivePropId): void {
+    this.island.triggerPropPulse(propId);
+  }
+
+  public triggerLanternWindSwell(): void {
+    this.island.triggerLanternWindSwell();
+  }
+
+  public getPropWorldPosition(propId: InteractivePropId, out: THREE.Vector3): boolean {
+    return this.island.getPropWorldPosition(propId, out);
   }
 
   public pickFrogAt(

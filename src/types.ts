@@ -40,7 +40,7 @@ export interface BiomeSpot {
 export const BIOME_SPOTS: BiomeSpot[] = [
   { id: 'overview', label: 'Sanctuary Overview', gx: 5.5, gy: 5.5, zoom: 1.6 },
   { id: 'shrine', label: '⛩️ Lantern Shrine', gx: 5.5, gy: 5.0, zoom: 2.1 },
-  { id: 'cottage', label: 'A-Frame Cottage', gx: 2.5, gy: 2.8, zoom: 1.95 },
+  { id: 'cottage', label: 'Cottage', gx: 2.5, gy: 2.8, zoom: 1.95 },
   { id: 'campfire', label: 'Campfire Terrace', gx: 2.5, gy: 6.8, zoom: 2.0 },
   { id: 'garden', label: 'Frog Pot & Garden', gx: 7.8, gy: 6.2, zoom: 2.0 },
   { id: 'waterfall', label: 'Waterfall Stream', gx: 4.8, gy: 9.2, zoom: 1.95 },

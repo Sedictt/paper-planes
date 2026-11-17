@@ -50,7 +50,7 @@ export function CustomCursor() {
       }
 
       if (el instanceof HTMLCanvasElement && el.style.cursor === 'pointer') {
-        return el.dataset.hoverTarget === 'frog' ? 'button' : 'plane';
+        return el.dataset.hoverTarget === 'plane' ? 'plane' : 'button';
       }
 
       if (isDown && (isCanvasDrag || el instanceof HTMLCanvasElement)) {

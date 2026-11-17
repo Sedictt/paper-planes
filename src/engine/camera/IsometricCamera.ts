@@ -99,6 +99,18 @@ export class IsometricCamera {
     this.onZoomChange?.(this.targetZoom);
   }
 
+  /** Center camera on an exact 3D world position with an optional un-clamped cutscene zoom. */
+  public focusWorldPoint(worldPos: THREE.Vector3, targetZoom: number, worldYOffset = 0): void {
+    this.velX = 0;
+    this.velY = 0;
+    const local = worldPos.clone().applyQuaternion(this.camera.quaternion.clone().invert());
+    this.targetCamX = -local.x;
+    this.targetCamY = local.y + worldYOffset;
+    this.targetZoom = Math.max(this.minZoom, targetZoom);
+
+    this.onZoomChange?.(this.targetZoom);
+  }
+
   public adjustZoom(delta: number): void {
     const nextZoom = Number((this.targetZoom + delta).toFixed(2));
     this.targetZoom = this.clampZoom(nextZoom);

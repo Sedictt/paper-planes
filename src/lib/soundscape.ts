@@ -1,6 +1,7 @@
 // Web Audio Procedural Soundscape (Wind, Rain, Background Music & Paper Fold SFX)
 // Zero external MP3 dependencies — works reliably across desktop & mobile browsers.
 
+import { LocationAmbiencePlayer } from './locationAmbience';
 import {
   MUSIC_TRACKS,
   ProceduralMusicPlayer,
@@ -8,6 +9,7 @@ import {
   type MusicTrackInfo,
 } from './musicSynth';
 import { synthesizeUiSfx, type UiSfxKind } from './uiSfx';
+import type { TimeOfDay } from '../types';
 
 export { MUSIC_TRACKS, type MusicTrackId, type MusicTrackInfo, type UiSfxKind };
 
@@ -26,10 +28,18 @@ class AmbientSoundscape {
   private rainGain: GainNode | null = null;
 
   private musicPlayer: ProceduralMusicPlayer | null = null;
+  private locationAmbience: LocationAmbiencePlayer | null = null;
+  private lastLocation: { viewX: number; viewY: number; zoom: number; timeOfDay: TimeOfDay } = {
+    viewX: 0,
+    viewY: 175,
+    zoom: 1.05,
+    timeOfDay: 'afternoon',
+  };
   private selectedTrackId: MusicTrackId = 'paper-boats';
   private autoCycle = true;
   private musicVolume = 0.65;
   private ambienceVolume = 0.55;
+  private indoorMuffled = false;
   private listeners = new Set<() => void>();
 
   public subscribe(listener: () => void): () => void {
@@ -50,12 +60,20 @@ class AmbientSoundscape {
     if (!this.isMuted) {
       this.initContext();
       this.updateWeatherMix(weather);
+      this.locationAmbience?.updateLocation(
+        this.lastLocation.viewX,
+        this.lastLocation.viewY,
+        this.lastLocation.zoom,
+        this.lastLocation.timeOfDay
+      );
+      this.locationAmbience?.start();
       this.musicPlayer?.start(this.selectedTrackId);
       this.playUiSfx('tap');
     } else {
       if (this.masterGain && this.ctx) {
         this.masterGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.25);
       }
+      this.locationAmbience?.stop();
       this.musicPlayer?.stop();
     }
     this.notify();
@@ -83,6 +101,13 @@ class AmbientSoundscape {
       this.isMuted = false;
       this.initContext();
       this.updateWeatherMix(weather);
+      this.locationAmbience?.updateLocation(
+        this.lastLocation.viewX,
+        this.lastLocation.viewY,
+        this.lastLocation.zoom,
+        this.lastLocation.timeOfDay
+      );
+      this.locationAmbience?.start();
       this.musicPlayer?.start(trackId);
     } else {
       this.initContext();
@@ -127,9 +152,18 @@ class AmbientSoundscape {
   public setAmbienceVolume(volume: number) {
     this.ambienceVolume = clamp01(volume);
     if (this.ambienceGain && this.ctx) {
-      this.ambienceGain.gain.setTargetAtTime(this.ambienceVolume, this.ctx.currentTime, 0.08);
+      const target = this.ambienceVolume * (this.indoorMuffled ? 0.28 : 1);
+      this.ambienceGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.08);
     }
     this.notify();
+  }
+
+  public setIndoorMuffled(muffled: boolean) {
+    this.indoorMuffled = muffled;
+    if (this.ambienceGain && this.ctx) {
+      const target = this.ambienceVolume * (muffled ? 0.28 : 1);
+      this.ambienceGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.28);
+    }
   }
 
   private initContext() {
@@ -218,6 +252,24 @@ class AmbientSoundscape {
     rainFilter.connect(this.rainGain);
     this.rainGain.connect(this.ambienceGain);
     rainSource.start();
+
+    this.locationAmbience = new LocationAmbiencePlayer(this.ctx, this.ambienceGain, noiseBuffer);
+    this.locationAmbience.updateLocation(
+      this.lastLocation.viewX,
+      this.lastLocation.viewY,
+      this.lastLocation.zoom,
+      this.lastLocation.timeOfDay
+    );
+  }
+
+  public updateCameraLocation(
+    viewX: number,
+    viewY: number,
+    zoom: number,
+    timeOfDay: TimeOfDay
+  ): void {
+    this.lastLocation = { viewX, viewY, zoom, timeOfDay };
+    this.locationAmbience?.updateLocation(viewX, viewY, zoom, timeOfDay);
   }
 
   public updateWeatherMix(weather: 'clear' | 'rain' | 'snow') {
@@ -360,6 +412,54 @@ class AmbientSoundscape {
       croakBurst(0.0, 0.07, 112 * jitter, 145 * jitter, 580 * jitter, 1260 * jitter, 52, 0.38);
       croakBurst(0.11, 0.085, 122 * jitter, 158 * jitter, 640 * jitter, 1380 * jitter, 54, 0.42);
     }
+  }
+
+  /** Subtle rising wind-chime cue when advancing the 4-step lore sequence */
+  public playLoreChime(step: number) {
+    if (this.isMuted || !this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+    const freqs = [523.25, 587.33, 659.25, 783.99]; // C5, D5, E5, G5
+    const baseFreq = freqs[Math.max(0, Math.min(freqs.length - 1, step - 1))];
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.005, now + 0.65);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.11, now + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.75);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(now);
+    osc.stop(now + 0.78);
+  }
+
+  /** Warm harmonic swell when unlocking Letter #0 & the Cathexis Lore Codex */
+  public playLoreUnlock() {
+    if (this.isMuted || !this.ctx || !this.masterGain) return;
+    const now = this.ctx.currentTime;
+    const chord = [392.0, 493.88, 587.33, 783.99]; // G4, B4, D5, G5
+
+    chord.forEach((freq, idx) => {
+      if (!this.ctx || !this.masterGain) return;
+      const t0 = now + idx * 0.09;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = idx % 2 === 0 ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(freq, t0);
+
+      gain.gain.setValueAtTime(0.001, t0);
+      gain.gain.linearRampToValueAtTime(0.09, t0 + 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.0008, t0 + 1.9);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t0);
+      osc.stop(t0 + 1.95);
+    });
   }
 }
 

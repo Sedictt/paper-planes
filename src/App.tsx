@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  BookOpen,
   Bug,
   Clock,
   Coffee,
@@ -32,11 +31,12 @@ import { CustomCursor } from './components/CustomCursor';
 import { CountryCombobox } from './components/CountryCombobox';
 import { ShareCardModal } from './components/ShareCardModal';
 import { LoreCodexModal } from './components/LoreCodexModal';
+import { FrogCutsceneOverlay } from './components/FrogCutsceneOverlay';
 import {
   advanceLoreSequence,
   getInteriorPropContent,
+  getOutdoorPropContent,
   LORE_CODEX_STORAGE_KEY,
-  OUTDOOR_PROP_HINTS,
   pickFrogLine,
   type InteractivePropId,
   type InteriorPropId,
@@ -159,16 +159,11 @@ export function App() {
   const propBubbleRef = useRef<HTMLDivElement>(null);
   const propTimerRef = useRef<number | null>(null);
   const prevFrogLineRef = useRef<string | null>(null);
+  const prevPropTextRef = useRef<Partial<Record<LorePropId, string>>>({});
+  const seenLinesRef = useRef<Map<LorePropId, Set<string>>>(new Map());
   const loreStepRef = useRef<number>(0);
-  const draftIndexRef = useRef<number>(0);
-  const [isLoreCodexUnlocked, setIsLoreCodexUnlocked] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem(LORE_CODEX_STORAGE_KEY) === 'true';
-    } catch {
-      return false;
-    }
-  });
   const [isLoreCodexOpen, setIsLoreCodexOpen] = useState(false);
+  const [isFrogCutsceneOpen, setIsFrogCutsceneOpen] = useState(false);
   const [isInsideCottage, setIsInsideCottage] = useState(false);
   const [isCottageTransitioning, setIsCottageTransitioning] = useState(false);
   const [isCmdOpen, setIsCmdOpen] = useState(false);
@@ -269,6 +264,19 @@ export function App() {
       setIsInsideCottage(false);
       window.setTimeout(() => setIsCottageTransitioning(false), 180);
     }, 220);
+  };
+
+  const startFrogCutscene = () => {
+    setPropBubble(null);
+    setIsLoreCodexOpen(false);
+    setIsInsideCottage(false);
+    engineRef.current?.enterFrogCutscene();
+    setIsFrogCutsceneOpen(true);
+  };
+
+  const exitFrogCutscene = () => {
+    engineRef.current?.exitFrogCutscene();
+    setIsFrogCutsceneOpen(false);
   };
 
   const isMac = useMemo(
@@ -445,8 +453,21 @@ export function App() {
       propTimerRef.current = window.setTimeout(() => setPropBubble(null), durationMs);
     };
 
+    const getSeenSet = (propId: LorePropId): Set<string> => {
+      let set = seenLinesRef.current.get(propId);
+      if (!set) {
+        set = new Set<string>();
+        seenLinesRef.current.set(propId, set);
+      }
+      return set;
+    };
+
     const showFrogLine = () => {
-      const nextLine = pickFrogLine(activeTimeRef.current, prevFrogLineRef.current);
+      const nextLine = pickFrogLine(
+        activeTimeRef.current,
+        prevFrogLineRef.current,
+        getSeenSet('frog')
+      );
       prevFrogLineRef.current = nextLine;
       showBubble({ propId: 'frog', text: nextLine }, 3400);
     };
@@ -458,14 +479,24 @@ export function App() {
       if (id === 'frog') {
         showFrogLine();
       } else if (id === 'campfire' || id === 'shrine' || id === 'waterfall' || id === 'cottage') {
-        const hint = OUTDOOR_PROP_HINTS[id as Exclude<InteractivePropId, 'frog'>];
-        showBubble({ propId: id, ...hint }, id === 'cottage' ? 5400 : 4400);
+        const outdoorId = id as Exclude<InteractivePropId, 'frog'>;
+        const hint = getOutdoorPropContent(
+          outdoorId,
+          activeTimeRef.current,
+          prevPropTextRef.current[outdoorId],
+          getSeenSet(outdoorId)
+        );
+        prevPropTextRef.current[outdoorId] = hint.text;
+        showBubble({ propId: outdoorId, ...hint }, outdoorId === 'cottage' ? 5400 : 4400);
       } else {
         const interiorId = id as InteriorPropId;
-        const content = getInteriorPropContent(interiorId, draftIndexRef.current);
-        if (interiorId === 'drafts') {
-          draftIndexRef.current += 1;
-        }
+        const content = getInteriorPropContent(
+          interiorId,
+          activeTimeRef.current,
+          prevPropTextRef.current[interiorId],
+          getSeenSet(interiorId)
+        );
+        prevPropTextRef.current[interiorId] = content.text;
         showBubble({ propId: interiorId, ...content }, interiorId === 'door' ? 5200 : 4800);
       }
 
@@ -480,9 +511,8 @@ export function App() {
         } catch {
           // Ignore storage quota errors
         }
-        setIsLoreCodexUnlocked(true);
         window.setTimeout(() => {
-          setIsLoreCodexOpen(true);
+          startFrogCutscene();
         }, 680);
       } else if (seq.matched) {
         soundscape.playLoreChime(seq.nextStep);
@@ -592,7 +622,7 @@ export function App() {
     const prevPlanes = [...planes];
 
     const launchBiome =
-      BIOME_SPOTS.find((spot) => spot.id === activeBiomeId)?.label ?? 'A-Frame Cottage';
+      BIOME_SPOTS.find((spot) => spot.id === activeBiomeId)?.label ?? 'Cottage';
     const originCountry = detectedCountry ?? undefined;
 
     try {
@@ -912,7 +942,7 @@ export function App() {
       )}
 
       {/* Unified Non-Overlapping Game HUD */}
-      <div className="hud-overlay">
+      <div className={`hud-overlay ${isFrogCutsceneOpen ? 'is-cutscene-hidden' : ''}`}>
         {/* Top Floating Game Corners */}
         <header className="hud-header">
           <div className="brand-cluster">
@@ -1263,22 +1293,6 @@ export function App() {
             </div>
 
             {/* Primary CTA: Fold a Plane */}
-            {isLoreCodexUnlocked && (
-              <button
-                id="open-lore-codex-btn"
-                type="button"
-                onClick={() => {
-                  setIsLoreCodexOpen(true);
-                  soundscape.playUiSfx('open');
-                }}
-                className="icon-pill-btn hide-mobile"
-                title="Cathexis Lore Codex (Letter #0)"
-                aria-label="Open Cathexis Lore Codex"
-              >
-                <BookOpen size={14} />
-              </button>
-            )}
-
             <button
               id="open-compose-cta"
               type="button"
@@ -2037,7 +2051,7 @@ export function App() {
             exit={{ opacity: 0, y: 10 }}
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
           >
-            <span className="cottage-indoor-label">A-Frame Cottage · Interior</span>
+            <div className="cottage-indoor-label">Cottage · Interior</div>
             <button
               type="button"
               className="cottage-exit-btn"
@@ -2050,7 +2064,21 @@ export function App() {
         )}
       </AnimatePresence>
 
-      <LoreCodexModal open={isLoreCodexOpen} onClose={() => setIsLoreCodexOpen(false)} />
+      <LoreCodexModal
+        open={isLoreCodexOpen}
+        onClose={() => setIsLoreCodexOpen(false)}
+        onStartCutscene={startFrogCutscene}
+      />
+
+      <FrogCutsceneOverlay
+        open={isFrogCutsceneOpen}
+        onExit={exitFrogCutscene}
+        onOpenLetterZero={() => {
+          exitFrogCutscene();
+          setIsLoreCodexOpen(true);
+        }}
+        onFrogReact={() => engineRef.current?.pulseFrogInCutscene()}
+      />
 
       {/* Interactive Prop & Frog NPC Floating Speech Bubble */}
       <AnimatePresence>
@@ -2077,9 +2105,9 @@ export function App() {
                 transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
               >
                 {propBubble.title && (
-                  <span className="lore-bubble-title">{propBubble.title}</span>
+                  <div className="lore-bubble-title">{propBubble.title}</div>
                 )}
-                <span className="lore-bubble-text">{propBubble.text}</span>
+                <div className="lore-bubble-text">{propBubble.text}</div>
                 {hasAction && (
                   <button
                     type="button"

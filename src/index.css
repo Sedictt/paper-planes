@@ -411,6 +411,12 @@ a:focus-visible {
   gap: 0.5rem;
 }
 
+.music-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
 .music-now-playing {
   font-size: 0.68rem;
   color: rgba(255, 253, 247, 0.58);
@@ -434,6 +440,12 @@ a:focus-visible {
 .music-icon-btn:hover {
   background: rgba(255, 255, 255, 0.14);
   color: #fffdf7;
+}
+
+.music-icon-btn.active {
+  background: rgba(232, 139, 82, 0.22);
+  border-color: rgba(232, 139, 82, 0.45);
+  color: #f4a261;
 }
 
 .music-track-list {

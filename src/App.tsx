@@ -932,16 +932,28 @@ export function App() {
                           {isMuted ? 'Paused' : `Playing · ${currentTrack.mood}`}
                         </div>
                       </div>
-                      <button
-                        id="music-next-btn"
-                        type="button"
-                        onClick={nextMusicTrack}
-                        className="music-icon-btn"
-                        title="Next Track"
-                        aria-label="Next Track"
-                      >
-                        <SkipForward size={13} />
-                      </button>
+                      <div className="music-header-actions">
+                        <button
+                          id="music-popover-sound-btn"
+                          type="button"
+                          onClick={toggleSound}
+                          className={`music-icon-btn ${!isMuted ? 'active' : ''}`}
+                          title={isMuted ? 'Play Music & Ambient Audio' : 'Mute Audio'}
+                          aria-label={isMuted ? 'Play Music & Ambient Audio' : 'Mute Audio'}
+                        >
+                          {isMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                        </button>
+                        <button
+                          id="music-next-btn"
+                          type="button"
+                          onClick={nextMusicTrack}
+                          className="music-icon-btn"
+                          title="Next Track"
+                          aria-label="Next Track"
+                        >
+                          <SkipForward size={13} />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="music-track-list" role="listbox" aria-label="Music Tracks">

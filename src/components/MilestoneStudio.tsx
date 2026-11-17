@@ -223,19 +223,20 @@ export function MilestoneStudio() {
           </div>
         )}
 
-        {/* Live Sky Metrics */}
-        <section aria-label="Live Sky Statistics" className="milestone-stats-grid">
+        {/* Live Sky Ledger */}
+        <section aria-label="Live Sky Statistics" className="milestone-ledger">
           {loading && !stats ? (
             <>
-              <div className="milestone-stat-card milestone-stat-skeleton" />
-              <div className="milestone-stat-card milestone-stat-skeleton" />
-              <div className="milestone-stat-card milestone-stat-skeleton" />
-              <div className="milestone-stat-card milestone-stat-skeleton" />
+              <div className="milestone-ledger-cell milestone-stat-skeleton" />
+              <div className="milestone-ledger-cell milestone-stat-skeleton" />
+              <div className="milestone-ledger-cell milestone-stat-skeleton" />
+              <div className="milestone-ledger-cell milestone-stat-skeleton" />
+              <div className="milestone-ledger-cell milestone-stat-skeleton" />
             </>
           ) : (
             <>
-              <div className="milestone-stat-card milestone-stat-featured">
-                <span className="milestone-stat-label">Total Planes Flying</span>
+              <div className="milestone-ledger-cell">
+                <span className="milestone-stat-label">Planes Flying</span>
                 <strong className="milestone-stat-value tabular-nums">
                   {effectiveStats.totalPlanes.toLocaleString('en-US')}
                 </strong>
@@ -253,7 +254,7 @@ export function MilestoneStudio() {
                 </div>
               </div>
 
-              <div className="milestone-stat-card milestone-stat-featured">
+              <div className="milestone-ledger-cell">
                 <span className="milestone-stat-label">Total Unfolds</span>
                 <strong className="milestone-stat-value tabular-nums">
                   {effectiveStats.totalUnfolds.toLocaleString('en-US')}
@@ -272,33 +273,33 @@ export function MilestoneStudio() {
                 </div>
               </div>
 
-              <div className="milestone-stat-card">
-                <span className="milestone-stat-label">Most-Unfolded Plane</span>
+              <div className="milestone-ledger-cell">
+                <span className="milestone-stat-label">Most Unfolded</span>
                 <strong className="milestone-stat-value tabular-nums">
                   {effectiveStats.mostUnfoldedReads.toLocaleString('en-US')}
                 </strong>
                 <span className="milestone-stat-hint">unfolds on a single note</span>
               </div>
 
-              <div className="milestone-stat-card">
+              <div className="milestone-ledger-cell">
                 <span className="milestone-stat-label">Sky Reach</span>
                 <strong className="milestone-stat-value tabular-nums">
                   {Math.round(effectiveStats.totalDistanceKm).toLocaleString('en-US')} km
                 </strong>
                 <span className="milestone-stat-hint tabular-nums">
-                  across {effectiveStats.countriesCount.toLocaleString('en-US')} countries ·{' '}
-                  {effectiveStats.planesToday.toLocaleString('en-US')} launched today
+                  {effectiveStats.countriesCount.toLocaleString('en-US')}{' '}
+                  {effectiveStats.countriesCount === 1 ? 'country' : 'countries'} ·{' '}
+                  {effectiveStats.planesToday.toLocaleString('en-US')} today
                 </span>
               </div>
 
-              <div className="milestone-stat-card">
-                <span className="milestone-stat-label">Unique Visitors</span>
+              <div className="milestone-ledger-cell">
+                <span className="milestone-stat-label">Visitors</span>
                 <strong className="milestone-stat-value tabular-nums">
                   {(effectiveStats.uniqueVisitors ?? 0).toLocaleString('en-US')}
                 </strong>
                 <span className="milestone-stat-hint tabular-nums">
-                  {(effectiveStats.visitorsToday ?? 0).toLocaleString('en-US')} active in the last
-                  24h
+                  {(effectiveStats.visitorsToday ?? 0).toLocaleString('en-US')} active in 24h
                 </span>
               </div>
             </>

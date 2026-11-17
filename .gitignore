@@ -18,3 +18,5 @@ image_2.png
 .profile
 .vscode/
 .pki/
+.vercel
+.env*

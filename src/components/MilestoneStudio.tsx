@@ -34,6 +34,14 @@ const ASPECT_OPTIONS: Array<{ id: ShareAspect; label: string }> = [
   { id: 'landscape', label: '16:9' },
 ];
 
+const PRESET_SHORT_LABELS: Record<MilestonePresetId, string> = {
+  planes_flying: 'Planes',
+  total_unfolds: 'Unfolds',
+  single_plane_unfolds: 'Top Note',
+  distance_countries: 'Reach',
+  daily_launches: 'Today',
+};
+
 export function MilestoneStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -49,9 +57,9 @@ export function MilestoneStudio() {
   const [customSingleReads, setCustomSingleReads] = useState('100');
 
   const [draftCopy, setDraftCopy] = useState('');
-  const [theme, setTheme] = useState<MilestoneTheme>('dusk');
+  const [theme, setTheme] = useState<MilestoneTheme>('golden');
   const [aspect, setAspect] = useState<ShareAspect>('square');
-  const [cardStyle, setCardStyle] = useState<ShareCardStyle>('glass');
+  const [cardStyle, setCardStyle] = useState<ShareCardStyle>('paper');
 
   const [copyPostState, setCopyPostState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [copyImgState, setCopyImgState] = useState<'idle' | 'copied' | 'error'>('idle');
@@ -189,7 +197,7 @@ export function MilestoneStudio() {
             </a>
             <h1 className="milestone-title">Milestone Studio</h1>
             <p className="milestone-subtitle">
-              Track live sky numbers and generate ready-to-share social posts and cards.
+              Live sky numbers, social captions, and exportable cards.
             </p>
           </div>
 
@@ -282,6 +290,17 @@ export function MilestoneStudio() {
                   {effectiveStats.planesToday.toLocaleString('en-US')} launched today
                 </span>
               </div>
+
+              <div className="milestone-stat-card">
+                <span className="milestone-stat-label">Unique Visitors</span>
+                <strong className="milestone-stat-value tabular-nums">
+                  {(effectiveStats.uniqueVisitors ?? 0).toLocaleString('en-US')}
+                </strong>
+                <span className="milestone-stat-hint tabular-nums">
+                  {(effectiveStats.visitorsToday ?? 0).toLocaleString('en-US')} active in the last
+                  24h
+                </span>
+              </div>
             </>
           )}
         </section>
@@ -290,17 +309,14 @@ export function MilestoneStudio() {
         <section className="milestone-workspace">
           <div className="milestone-panel">
             <div className="milestone-panel-head">
-              <h2 className="milestone-panel-title">
-                <Sparkles size={16} />
-                <span>Social Post Draft</span>
-              </h2>
+              <h2 className="milestone-panel-title">Post Caption</h2>
               <button
                 type="button"
                 className={`milestone-toggle-pill ${useCustomPreview ? 'is-active' : ''}`}
                 onClick={() => setUseCustomPreview((v) => !v)}
               >
                 <SlidersHorizontal size={13} />
-                <span>{useCustomPreview ? 'Custom N Active' : 'Simulate Future N'}</span>
+                <span>{useCustomPreview ? 'Simulating N' : 'Simulate N'}</span>
               </button>
             </div>
 
@@ -327,7 +343,7 @@ export function MilestoneStudio() {
                   />
                 </label>
                 <label className="milestone-input-group">
-                  <span>Single Plane Unfolds</span>
+                  <span>Top Note</span>
                   <input
                     type="number"
                     min={0}
@@ -339,23 +355,23 @@ export function MilestoneStudio() {
               </div>
             )}
 
-            <div className="milestone-preset-row" role="group" aria-label="Milestone preset">
+            <div className="milestone-preset-tabs" role="group" aria-label="Milestone preset">
               {templates.map((tpl) => (
                 <button
                   key={tpl.id}
                   type="button"
                   onClick={() => setSelectedPreset(tpl.id)}
-                  className={`milestone-preset-btn ${selectedPreset === tpl.id ? 'is-active' : ''}`}
+                  className={`milestone-preset-tab ${selectedPreset === tpl.id ? 'is-active' : ''}`}
                 >
-                  {tpl.label}
+                  {PRESET_SHORT_LABELS[tpl.id]}
                 </button>
               ))}
             </div>
 
             <label className="milestone-textarea-label">
-              <span>Editable Caption</span>
+              <span className="sr-only">Post caption text</span>
               <textarea
-                rows={5}
+                rows={7}
                 value={draftCopy}
                 onChange={(e) => setDraftCopy(e.target.value)}
                 className="milestone-textarea"
@@ -363,6 +379,9 @@ export function MilestoneStudio() {
             </label>
 
             <div className="milestone-panel-actions">
+              <span className="milestone-char-count tabular-nums">
+                {draftCopy.length} chars
+              </span>
               <button type="button" className="milestone-btn milestone-btn-primary" onClick={handleCopyPost}>
                 {copyPostState === 'copied' ? <Check size={15} /> : <Copy size={15} />}
                 <span>
@@ -378,85 +397,89 @@ export function MilestoneStudio() {
 
           <div className="milestone-panel">
             <div className="milestone-panel-head">
-              <h2 className="milestone-panel-title">Shareable Milestone Card</h2>
+              <h2 className="milestone-panel-title">Milestone Card</h2>
+              <span className="milestone-panel-meta tabular-nums">
+                {ASPECT_OPTIONS.find((a) => a.id === aspect)?.label} ·{' '}
+                {cardStyle === 'paper' ? 'Paper' : 'Glass'}
+              </span>
             </div>
 
             <div className="share-preview-stage milestone-canvas-stage">
-              <canvas ref={canvasRef} className="share-preview-canvas" />
+              <canvas ref={canvasRef} className="share-preview-canvas milestone-preview-canvas" />
             </div>
 
-            <div className="share-toolbar">
+            <div className="share-toolbar milestone-card-toolbar">
               <div className="share-swatch-row" role="group" aria-label="Backdrop">
                 {THEME_OPTIONS.map((t) => (
                   <button
                     key={t.id}
                     type="button"
                     onClick={() => setTheme(t.id)}
-                    className={`share-swatch ${theme === t.id ? 'is-active' : ''}`}
+                    className={`share-swatch-btn ${theme === t.id ? 'active' : ''}`}
                     style={{ background: t.swatch }}
                     title={t.label}
-                    aria-label={t.label}
+                    aria-label={`${t.label} backdrop`}
                     aria-pressed={theme === t.id}
                   />
                 ))}
               </div>
 
-              <div className="share-controls-row">
-                <div className="share-seg" role="group" aria-label="Aspect ratio">
+              <div className="milestone-toolbar-controls">
+                <div className="share-segmented" role="group" aria-label="Aspect ratio">
                   {ASPECT_OPTIONS.map((a) => (
                     <button
                       key={a.id}
                       type="button"
                       onClick={() => setAspect(a.id)}
-                      className={`share-seg-btn ${aspect === a.id ? 'is-active' : ''}`}
+                      className={`share-seg-btn ${aspect === a.id ? 'active' : ''}`}
                     >
                       {a.label}
                     </button>
                   ))}
                 </div>
 
-                <div className="share-seg" role="group" aria-label="Card style">
+                <div className="share-segmented" role="group" aria-label="Card style">
                   <button
                     type="button"
                     onClick={() => setCardStyle('paper')}
-                    className={`share-seg-btn ${cardStyle === 'paper' ? 'is-active' : ''}`}
+                    className={`share-seg-btn ${cardStyle === 'paper' ? 'active' : ''}`}
                   >
                     Paper
                   </button>
                   <button
                     type="button"
                     onClick={() => setCardStyle('glass')}
-                    className={`share-seg-btn ${cardStyle === 'glass' ? 'is-active' : ''}`}
+                    className={`share-seg-btn ${cardStyle === 'glass' ? 'active' : ''}`}
                   >
                     Glass
                   </button>
                 </div>
               </div>
+            </div>
 
-              <div className="share-action-row">
-                <button
-                  type="button"
-                  onClick={handleCopyImage}
-                  className="share-btn share-btn-secondary"
-                >
-                  {copyImgState === 'copied' ? <Check size={14} /> : <Copy size={14} />}
-                  <span>
-                    {copyImgState === 'copied'
-                      ? 'Copied!'
-                      : copyImgState === 'error'
-                        ? 'Unavailable'
-                        : 'Copy Image'}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDownloadCard}
-                  className="share-btn share-btn-primary"
-                >
-                  <Download size={14} />
-                  <span>Download PNG</span>
-                </button>
-              </div>
+            <div className="share-actions">
+              <button
+                type="button"
+                onClick={handleCopyImage}
+                className="share-secondary-btn milestone-share-btn"
+              >
+                {copyImgState === 'copied' ? <Check size={14} /> : <Copy size={14} />}
+                <span>
+                  {copyImgState === 'copied'
+                    ? 'Copied!'
+                    : copyImgState === 'error'
+                      ? 'Unavailable'
+                      : 'Copy Image'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadCard}
+                className="share-primary-btn milestone-share-btn"
+              >
+                <Download size={14} />
+                <span>Download PNG</span>
+              </button>
             </div>
           </div>
         </section>

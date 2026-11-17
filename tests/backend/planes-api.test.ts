@@ -456,6 +456,51 @@ describe('Paper Planes Backend API', () => {
     expect(updated.planesToday).toBe(initial.planesToday + 1);
     expect(updated.countriesCount).toBe(initial.countriesCount + 1);
   });
+
+  it('tracks unique visitors by hashed IP without duplicating repeat visits', async () => {
+    const app = createApp({
+      repo: new MemoryPlanesRepository(),
+      env: { NODE_ENV: 'test', IP_HASH_SALT: 'test-salt-12345' },
+    });
+
+    await app.request('/api/region', { headers: { 'x-forwarded-for': '203.0.113.10' } });
+    await app.request('/api/region', { headers: { 'x-forwarded-for': '203.0.113.10' } });
+    await app.request('/api/region', { headers: { 'x-forwarded-for': '203.0.113.11' } });
+
+    const statsRes = await app.request('/api/stats?fresh=1');
+    expect(statsRes.status).toBe(200);
+    const stats = (await statsRes.json()) as {
+      uniqueVisitors?: number;
+      visitorsToday?: number;
+    };
+    expect(stats.uniqueVisitors).toBe(2);
+    expect(stats.visitorsToday).toBe(2);
+  });
+
+  it('rejects disallowed Origin on POST mutations when ALLOWED_ORIGINS is configured', async () => {
+    const app = createApp({
+      repo: new MemoryPlanesRepository(),
+      env: {
+        NODE_ENV: 'test',
+        IP_HASH_SALT: 'test-salt-12345',
+        ALLOWED_ORIGINS: 'https://paperplanes.example',
+      },
+    });
+
+    const req = new Request('http://localhost/api/planes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: 'Cross-site forged plane attempt.',
+      }),
+    });
+    const origGet = req.headers.get.bind(req.headers);
+    req.headers.get = (name: string) =>
+      name.toLowerCase() === 'origin' ? 'https://evil.example' : origGet(name);
+
+    const res = await app.fetch(req);
+    expect(res.status).toBe(403);
+  });
 });
 
 describe('Environment validation', () => {

@@ -26,6 +26,8 @@ export interface SkyStats {
   countriesCount: number;
   planesToday: number;
   mostUnfoldedReads: number;
+  uniqueVisitors?: number;
+  visitorsToday?: number;
   updatedAt: string;
 }
 

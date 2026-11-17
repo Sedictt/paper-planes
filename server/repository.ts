@@ -52,6 +52,7 @@ export interface PlanesRepository {
   createPlane(input: CreatePlaneRecordInput, idempotencyKey?: string): Promise<CreatePlaneResult>;
   incrementRead(id: string): Promise<{ ok: boolean; reads: number }>;
   flagPlane(id: string, ipHash: string, undo: boolean): Promise<{ ok: boolean }>;
+  recordVisitor(ipHash: string): Promise<void>;
   getSkyStats(): Promise<SkyStats>;
   checkAndIncrementRateLimit(
     bucketKey: string,
@@ -103,6 +104,7 @@ export class MemoryPlanesRepository implements PlanesRepository {
   private planes: InternalPlaneRecord[];
   private idempotency = new Map<string, InternalPlaneRecord>();
   private rateLimits = new Map<string, { count: number; resetAtMs: number }>();
+  private visitors = new Map<string, number>();
   private planeFlags = new Set<string>();
   private nextNumber = 200;
 
@@ -204,6 +206,10 @@ export class MemoryPlanesRepository implements PlanesRepository {
 
     this.planes.unshift(record);
     if (idempotencyKey) {
+      if (this.idempotency.size >= 5000) {
+        const oldestKey = this.idempotency.keys().next().value;
+        if (oldestKey) this.idempotency.delete(oldestKey);
+      }
       this.idempotency.set(idempotencyKey, record);
     }
 
@@ -236,6 +242,10 @@ export class MemoryPlanesRepository implements PlanesRepository {
     return { ok: true };
   }
 
+  async recordVisitor(ipHash: string): Promise<void> {
+    this.visitors.set(ipHash, Date.now());
+  }
+
   async getSkyStats(): Promise<SkyStats> {
     const visible = this.planes.filter((p) => p.flags < 3 && !p.shadowBlocked);
     const dayAgoMs = Date.now() - 24 * 60 * 60 * 1000;
@@ -245,6 +255,7 @@ export class MemoryPlanesRepository implements PlanesRepository {
     let totalDistanceKm = 0;
     let planesToday = 0;
     let mostUnfoldedReads = 0;
+    let visitorsToday = 0;
 
     for (const plane of visible) {
       totalUnfolds += plane.reads;
@@ -260,6 +271,12 @@ export class MemoryPlanesRepository implements PlanesRepository {
       }
     }
 
+    for (const lastSeenMs of this.visitors.values()) {
+      if (lastSeenMs >= dayAgoMs) {
+        visitorsToday += 1;
+      }
+    }
+
     return {
       totalPlanes: visible.length,
       totalUnfolds,
@@ -267,6 +284,8 @@ export class MemoryPlanesRepository implements PlanesRepository {
       countriesCount: countries.size,
       planesToday,
       mostUnfoldedReads,
+      uniqueVisitors: this.visitors.size,
+      visitorsToday,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -277,6 +296,13 @@ export class MemoryPlanesRepository implements PlanesRepository {
     windowMs: number
   ): Promise<RateLimitResult> {
     const nowMs = Date.now();
+    if (this.rateLimits.size > 2000) {
+      for (const [key, entry] of this.rateLimits) {
+        if (nowMs >= entry.resetAtMs) {
+          this.rateLimits.delete(key);
+        }
+      }
+    }
     const existing = this.rateLimits.get(bucketKey);
 
     if (existing && nowMs < existing.resetAtMs) {
@@ -535,29 +561,49 @@ export class PostgresPlanesRepository implements PlanesRepository {
     return { ok: true };
   }
 
-  async getSkyStats(): Promise<SkyStats> {
-    const rows = await this.sql<
-      {
-        total_planes: number;
-        total_unfolds: number;
-        total_distance_km: number;
-        countries_count: number;
-        planes_today: number;
-        most_unfolded_reads: number;
-      }[]
-    >`
-      SELECT
-        COUNT(*)::int AS total_planes,
-        COALESCE(SUM(reads), 0)::int AS total_unfolds,
-        COALESCE(ROUND(SUM(distance_km)::numeric, 1), 0)::float8 AS total_distance_km,
-        COUNT(DISTINCT country_code)::int AS countries_count,
-        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS planes_today,
-        COALESCE(MAX(reads), 0)::int AS most_unfolded_reads
-      FROM planes
-      WHERE flags < 3 AND shadow_blocked = FALSE
-    `;
+  async recordVisitor(ipHash: string): Promise<void> {
+    await this.sql`
+      INSERT INTO visitors (ip_hash, first_seen_at, last_seen_at)
+      VALUES (${ipHash}, NOW(), NOW())
+      ON CONFLICT (ip_hash) DO UPDATE
+      SET last_seen_at = NOW()
+    `.catch(() => {
+      // Allow graceful operation before migration 003_add_visitors.sql is applied
+    });
+  }
 
-    const row = rows[0];
+  async getSkyStats(): Promise<SkyStats> {
+    const [planeRows, visitorRows] = await Promise.all([
+      this.sql<
+        {
+          total_planes: number;
+          total_unfolds: number;
+          total_distance_km: number;
+          countries_count: number;
+          planes_today: number;
+          most_unfolded_reads: number;
+        }[]
+      >`
+        SELECT
+          COUNT(*)::int AS total_planes,
+          COALESCE(SUM(reads), 0)::int AS total_unfolds,
+          COALESCE(ROUND(SUM(distance_km)::numeric, 1), 0)::float8 AS total_distance_km,
+          COUNT(DISTINCT country_code)::int AS countries_count,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS planes_today,
+          COALESCE(MAX(reads), 0)::int AS most_unfolded_reads
+        FROM planes
+        WHERE flags < 3 AND shadow_blocked = FALSE
+      `,
+      this.sql<{ unique_visitors: number; visitors_today: number }[]>`
+        SELECT
+          COUNT(*)::int AS unique_visitors,
+          COUNT(*) FILTER (WHERE last_seen_at >= NOW() - INTERVAL '24 hours')::int AS visitors_today
+        FROM visitors
+      `.catch(() => [{ unique_visitors: 0, visitors_today: 0 }]),
+    ]);
+
+    const row = planeRows[0];
+    const vRow = visitorRows[0];
     return {
       totalPlanes: Number(row?.total_planes ?? 0),
       totalUnfolds: Number(row?.total_unfolds ?? 0),
@@ -565,6 +611,8 @@ export class PostgresPlanesRepository implements PlanesRepository {
       countriesCount: Number(row?.countries_count ?? 0),
       planesToday: Number(row?.planes_today ?? 0),
       mostUnfoldedReads: Number(row?.most_unfolded_reads ?? 0),
+      uniqueVisitors: Number(vRow?.unique_visitors ?? 0),
+      visitorsToday: Number(vRow?.visitors_today ?? 0),
       updatedAt: new Date().toISOString(),
     };
   }

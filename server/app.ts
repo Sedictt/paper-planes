@@ -19,6 +19,7 @@ const MAX_BODY_BYTES = 8192;
 const LAUNCH_RATE_LIMIT = { max: 8, windowMs: 10 * 60 * 1000 };
 const FLAG_RATE_LIMIT = { max: 30, windowMs: 10 * 60 * 1000 };
 const READ_RATE_LIMIT = { max: 60, windowMs: 60 * 1000 };
+const LIST_RATE_LIMIT = { max: 120, windowMs: 60 * 1000 };
 const FEEDBACK_RATE_LIMIT = { max: 5, windowMs: 10 * 60 * 1000 };
 
 function hashClientIp(c: Context, salt: string, nodeEnv: AppEnv['NODE_ENV']): string {
@@ -27,7 +28,7 @@ function hashClientIp(c: Context, salt: string, nodeEnv: AppEnv['NODE_ENV']): st
   const forwarded =
     nodeEnv !== 'production' ? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() : undefined;
   const rawIp = vercelIp || realIp || forwarded || 'local';
-  return crypto.createHash('sha256').update(`${salt}:${rawIp}`).digest('hex').slice(0, 24);
+  return crypto.createHmac('sha256', salt).update(rawIp).digest('hex').slice(0, 32);
 }
 
 function detectCountryFromRequest(c: Context): string | null {
@@ -94,19 +95,39 @@ export function createApp(deps: CreateAppDeps = {}): Hono {
   });
 
   // Explicit CORS allowlist when configured (never wildcard with credentials)
-  if (env.ALLOWED_ORIGINS) {
-    const allowlist = env.ALLOWED_ORIGINS.split(',')
-      .map((o) => o.trim())
-      .filter(Boolean);
+  const originAllowlist = env.ALLOWED_ORIGINS
+    ? env.ALLOWED_ORIGINS.split(',')
+        .map((o) => o.trim())
+        .filter(Boolean)
+    : null;
+
+  if (originAllowlist) {
     app.use(
       '*',
       cors({
-        origin: (origin) => (allowlist.includes(origin) ? origin : ''),
+        origin: (origin) => (originAllowlist.includes(origin) ? origin : ''),
         allowMethods: ['GET', 'POST', 'OPTIONS'],
         allowHeaders: ['Content-Type', 'Idempotency-Key'],
       })
     );
   }
+
+  // Reject cross-site state-changing requests (Sec-Fetch-Site / Origin check)
+  app.use('*', async (c, next) => {
+    if (c.req.method === 'POST') {
+      const fetchSite = c.req.header('sec-fetch-site')?.toLowerCase();
+      if (fetchSite === 'cross-site') {
+        return c.json({ error: 'Cross-site requests are not allowed.' }, 403);
+      }
+      if (originAllowlist) {
+        const origin = c.req.header('origin');
+        if (origin && !originAllowlist.includes(origin)) {
+          return c.json({ error: 'Origin not allowed.' }, 403);
+        }
+      }
+    }
+    return next();
+  });
 
   app.onError((err, c) => {
     const requestId = (c.get('requestId' as never) as string | undefined) ?? 'unknown';
@@ -130,12 +151,33 @@ export function createApp(deps: CreateAppDeps = {}): Hono {
     }
   });
 
-  app.get('/region', (c) => {
+  app.get('/region', async (c) => {
+    const ipHash = hashClientIp(c, env.IP_HASH_SALT, env.NODE_ENV);
+    const rate = await repo.checkAndIncrementRateLimit(
+      `region:${ipHash}`,
+      LIST_RATE_LIMIT.max,
+      LIST_RATE_LIMIT.windowMs
+    );
+    if (!rate.allowed) {
+      c.header('Retry-After', String(rate.retryAfterSec));
+      return c.json({ error: 'Too many requests. Please wait a moment.' }, 429);
+    }
+    await repo.recordVisitor(ipHash).catch(() => {});
     c.header('Cache-Control', 'no-store');
     return c.json({ country: detectCountryFromRequest(c) });
   });
 
   app.get('/stats', async (c) => {
+    const ipHash = hashClientIp(c, env.IP_HASH_SALT, env.NODE_ENV);
+    const rate = await repo.checkAndIncrementRateLimit(
+      `stats:${ipHash}`,
+      LIST_RATE_LIMIT.max,
+      LIST_RATE_LIMIT.windowMs
+    );
+    if (!rate.allowed) {
+      c.header('Retry-After', String(rate.retryAfterSec));
+      return c.json({ error: 'Too many requests. Please wait a moment.' }, 429);
+    }
     const fresh = c.req.query('fresh') === '1';
     const stats = await repo.getSkyStats();
     c.header(
@@ -146,6 +188,16 @@ export function createApp(deps: CreateAppDeps = {}): Hono {
   });
 
   app.get('/planes', async (c) => {
+    const ipHash = hashClientIp(c, env.IP_HASH_SALT, env.NODE_ENV);
+    const rate = await repo.checkAndIncrementRateLimit(
+      `list:${ipHash}`,
+      LIST_RATE_LIMIT.max,
+      LIST_RATE_LIMIT.windowMs
+    );
+    if (!rate.allowed) {
+      c.header('Retry-After', String(rate.retryAfterSec));
+      return c.json({ error: 'Too many requests. Please wait a moment.' }, 429);
+    }
     const parsedQuery = ListPlanesQuerySchema.safeParse({
       limit: c.req.query('limit'),
       cursor: c.req.query('cursor'),

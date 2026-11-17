@@ -154,7 +154,9 @@ export function App() {
   // Region Filter & Compose State
   const [detectedCountry, setDetectedCountry] = useState<string | null>(null);
   const [selectedCountry, setSelectedCountry] = useState<string>('');
+  const [hasResolvedRegion, setHasResolvedRegion] = useState(false);
   const [regionFallbackCountry, setRegionFallbackCountry] = useState<string | null>(null);
+  const hasUserPickedRegionRef = useRef(false);
 
   // Compose Form State
   const [composeTitle, setComposeTitle] = useState('');
@@ -254,12 +256,6 @@ export function App() {
     engineRef.current = engine;
     setWorldError(null);
 
-    fetchDetectedRegion().then((country) => {
-      if (country) {
-        setDetectedCountry(country);
-      }
-    });
-
     return () => {
       engine.destroy();
       engineRef.current = null;
@@ -267,8 +263,27 @@ export function App() {
     };
   }, [engineAttempt]);
 
-  // Fetch planes whenever the active region filter changes (or on initial mount)
+  // Detect visitor's local region on mount and default the sky filter to it
   useEffect(() => {
+    let cancelled = false;
+    fetchDetectedRegion().then((country) => {
+      if (cancelled) return;
+      if (country) {
+        setDetectedCountry(country);
+        if (!hasUserPickedRegionRef.current) {
+          setSelectedCountry(country);
+        }
+      }
+      setHasResolvedRegion(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch planes whenever the active region filter changes (after initial region detection)
+  useEffect(() => {
+    if (!hasResolvedRegion) return;
     const activeCountry = selectedCountry || undefined;
     fetchPlanesPool(false, activeCountry)
       .then(({ planes: nextPlanes, fallbackUsed }) => {
@@ -281,7 +296,7 @@ export function App() {
           message: 'Sky is offline right now — showing local sanctuary.',
         });
       });
-  }, [selectedCountry]);
+  }, [selectedCountry, hasResolvedRegion]);
 
   // Sync Engine state when Time, Weather, Fireworks, Graphics, or Planes change
   useEffect(() => {
@@ -788,7 +803,10 @@ export function App() {
             {/* Region Filter Combobox */}
             <CountryCombobox
               value={selectedCountry}
-              onChange={setSelectedCountry}
+              onChange={(code) => {
+                hasUserPickedRegionRef.current = true;
+                setSelectedCountry(code);
+              }}
               options={countryOptions}
               detectedCountry={detectedCountry}
             />

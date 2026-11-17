@@ -414,37 +414,64 @@ class AmbientSoundscape {
     }
   }
 
+  private ensureDirectSfxDestination(): AudioNode | null {
+    if (typeof window === 'undefined') return null;
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return null;
+
+    if (!this.ctx) {
+      this.ctx = new AudioCtx();
+    }
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+    if (!this.isMuted && this.masterGain) {
+      return this.masterGain;
+    }
+    return this.ctx.destination;
+  }
+
   /** Subtle rising wind-chime cue when advancing the 4-step lore sequence */
   public playLoreChime(step: number) {
-    if (this.isMuted || !this.ctx || !this.masterGain) return;
+    const dest = this.ensureDirectSfxDestination();
+    if (!this.ctx || !dest) return;
     const now = this.ctx.currentTime;
     const freqs = [523.25, 587.33, 659.25, 783.99]; // C5, D5, E5, G5
     const baseFreq = freqs[Math.max(0, Math.min(freqs.length - 1, step - 1))];
 
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(baseFreq, now);
-    osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.005, now + 0.65);
+    const playPartial = (freq: number, peak: number, dur: number) => {
+      if (!this.ctx) return;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.004, now + dur);
 
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.11, now + 0.025);
-    gain.gain.exponentialRampToValueAtTime(0.0008, now + 0.75);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(peak, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0008, now + dur);
 
-    osc.connect(gain);
-    gain.connect(this.masterGain);
-    osc.start(now);
-    osc.stop(now + 0.78);
+      osc.connect(gain);
+      gain.connect(dest);
+      osc.start(now);
+      osc.stop(now + dur + 0.02);
+    };
+
+    playPartial(baseFreq, 0.14, 0.85);
+    playPartial(baseFreq * 2, 0.045, 0.55);
   }
 
-  /** Warm harmonic swell when unlocking Letter #0 & the Cathexis Lore Codex */
+  /** Warm harmonic swell when unlocking Letter #0 & the Frog Cutscene */
   public playLoreUnlock() {
-    if (this.isMuted || !this.ctx || !this.masterGain) return;
+    const dest = this.ensureDirectSfxDestination();
+    if (!this.ctx || !dest) return;
     const now = this.ctx.currentTime;
     const chord = [392.0, 493.88, 587.33, 783.99]; // G4, B4, D5, G5
 
     chord.forEach((freq, idx) => {
-      if (!this.ctx || !this.masterGain) return;
+      if (!this.ctx) return;
       const t0 = now + idx * 0.09;
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
@@ -452,11 +479,11 @@ class AmbientSoundscape {
       osc.frequency.setValueAtTime(freq, t0);
 
       gain.gain.setValueAtTime(0.001, t0);
-      gain.gain.linearRampToValueAtTime(0.09, t0 + 0.12);
+      gain.gain.linearRampToValueAtTime(0.11, t0 + 0.12);
       gain.gain.exponentialRampToValueAtTime(0.0008, t0 + 1.9);
 
       osc.connect(gain);
-      gain.connect(this.masterGain);
+      gain.connect(dest);
       osc.start(t0);
       osc.stop(t0 + 1.95);
     });

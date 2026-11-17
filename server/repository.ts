@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import postgres, { type Sql } from 'postgres';
-import type { PaperPlaneNote, PaperTint, TimeOfDay } from '../src/types';
-import { formatRelativeTime } from './moderation';
-import { INITIAL_SEED_PLANES, type InternalPlaneRecord } from './seedData';
+import type { PaperPlaneNote, PaperTint, SkyStats, TimeOfDay } from '../src/types';
+import { formatRelativeTime } from './moderation.js';
+import { INITIAL_SEED_PLANES, type InternalPlaneRecord } from './seedData.js';
 
 export interface ListPlanesOptions {
   limit: number;
@@ -52,6 +52,7 @@ export interface PlanesRepository {
   createPlane(input: CreatePlaneRecordInput, idempotencyKey?: string): Promise<CreatePlaneResult>;
   incrementRead(id: string): Promise<{ ok: boolean; reads: number }>;
   flagPlane(id: string, ipHash: string, undo: boolean): Promise<{ ok: boolean }>;
+  getSkyStats(): Promise<SkyStats>;
   checkAndIncrementRateLimit(
     bucketKey: string,
     maxCount: number,
@@ -233,6 +234,41 @@ export class MemoryPlanesRepository implements PlanesRepository {
       found.flags += 1;
     }
     return { ok: true };
+  }
+
+  async getSkyStats(): Promise<SkyStats> {
+    const visible = this.planes.filter((p) => p.flags < 3 && !p.shadowBlocked);
+    const dayAgoMs = Date.now() - 24 * 60 * 60 * 1000;
+    const countries = new Set<string>();
+
+    let totalUnfolds = 0;
+    let totalDistanceKm = 0;
+    let planesToday = 0;
+    let mostUnfoldedReads = 0;
+
+    for (const plane of visible) {
+      totalUnfolds += plane.reads;
+      totalDistanceKm += plane.distanceKm;
+      if (plane.reads > mostUnfoldedReads) {
+        mostUnfoldedReads = plane.reads;
+      }
+      if (plane.countryCode) {
+        countries.add(plane.countryCode);
+      }
+      if (Date.parse(plane.createdAtIso) >= dayAgoMs) {
+        planesToday += 1;
+      }
+    }
+
+    return {
+      totalPlanes: visible.length,
+      totalUnfolds,
+      totalDistanceKm: Number(totalDistanceKm.toFixed(1)),
+      countriesCount: countries.size,
+      planesToday,
+      mostUnfoldedReads,
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   async checkAndIncrementRateLimit(
@@ -497,6 +533,40 @@ export class PostgresPlanesRepository implements PlanesRepository {
       }
     });
     return { ok: true };
+  }
+
+  async getSkyStats(): Promise<SkyStats> {
+    const rows = await this.sql<
+      {
+        total_planes: number;
+        total_unfolds: number;
+        total_distance_km: number;
+        countries_count: number;
+        planes_today: number;
+        most_unfolded_reads: number;
+      }[]
+    >`
+      SELECT
+        COUNT(*)::int AS total_planes,
+        COALESCE(SUM(reads), 0)::int AS total_unfolds,
+        COALESCE(ROUND(SUM(distance_km)::numeric, 1), 0)::float8 AS total_distance_km,
+        COUNT(DISTINCT country_code)::int AS countries_count,
+        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS planes_today,
+        COALESCE(MAX(reads), 0)::int AS most_unfolded_reads
+      FROM planes
+      WHERE flags < 3 AND shadow_blocked = FALSE
+    `;
+
+    const row = rows[0];
+    return {
+      totalPlanes: Number(row?.total_planes ?? 0),
+      totalUnfolds: Number(row?.total_unfolds ?? 0),
+      totalDistanceKm: Number(row?.total_distance_km ?? 0),
+      countriesCount: Number(row?.countries_count ?? 0),
+      planesToday: Number(row?.planes_today ?? 0),
+      mostUnfoldedReads: Number(row?.most_unfolded_reads ?? 0),
+      updatedAt: new Date().toISOString(),
+    };
   }
 
   async checkAndIncrementRateLimit(

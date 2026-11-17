@@ -1,10 +1,10 @@
 import crypto from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
-import { getEnv, type AppEnv } from './env';
-import { dispatchFeedbackEmail } from './feedback';
-import { moderatePlaneText } from './moderation';
-import { getPlanesRepository, type PlanesRepository } from './repository';
+import { getEnv, type AppEnv } from './env.js';
+import { dispatchFeedbackEmail } from './feedback.js';
+import { moderatePlaneText } from './moderation.js';
+import { getPlanesRepository, type PlanesRepository } from './repository.js';
 import {
   CountryCodeSchema,
   CreatePlaneSchema,
@@ -13,7 +13,7 @@ import {
   ListPlanesQuerySchema,
   RandomPlaneQuerySchema,
   ReadPlaneSchema,
-} from './schemas';
+} from './schemas.js';
 
 const MAX_BODY_BYTES = 8192;
 const LAUNCH_RATE_LIMIT = { max: 8, windowMs: 10 * 60 * 1000 };
@@ -133,6 +133,16 @@ export function createApp(deps: CreateAppDeps = {}): Hono {
   app.get('/region', (c) => {
     c.header('Cache-Control', 'no-store');
     return c.json({ country: detectCountryFromRequest(c) });
+  });
+
+  app.get('/stats', async (c) => {
+    const fresh = c.req.query('fresh') === '1';
+    const stats = await repo.getSkyStats();
+    c.header(
+      'Cache-Control',
+      fresh ? 'no-store' : 'public, s-maxage=30, stale-while-revalidate=60'
+    );
+    return c.json(stats);
   });
 
   app.get('/planes', async (c) => {

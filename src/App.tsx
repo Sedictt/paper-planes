@@ -74,6 +74,8 @@ import {
   type WeatherMode,
 } from './types';
 
+const KO_FI_ENABLED = false;
+
 interface ActivePropBubble {
   propId: LorePropId;
   title?: string;
@@ -1406,18 +1408,20 @@ export function App() {
               <Bug size={14} />
             </button>
 
-            <button
-              id="support-sky-btn"
-              type="button"
-              onClick={() => {
-                setIsSupportOpen(true);
-                soundscape.playUiSfx('open');
-              }}
-              className="support-btn"
-            >
-              <Coffee size={14} />
-              <span>Support</span>
-            </button>
+            {KO_FI_ENABLED && (
+              <button
+                id="support-sky-btn"
+                type="button"
+                onClick={() => {
+                  setIsSupportOpen(true);
+                  soundscape.playUiSfx('open');
+                }}
+                className="support-btn"
+              >
+                <Coffee size={14} />
+                <span>Support</span>
+              </button>
+            )}
           </div>
 
           <div className="popover-anchor mobile-only" ref={moreMenuRef}>
@@ -1449,19 +1453,21 @@ export function App() {
                   exit={{ opacity: 0, y: 6, scale: 0.96 }}
                   transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
                 >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setIsMoreMenuOpen(false);
-                      setIsSupportOpen(true);
-                      soundscape.playUiSfx('open');
-                    }}
-                    className="popover-item"
-                  >
-                    <span>Support the Sky</span>
-                    <Coffee size={13} />
-                  </button>
+                  {KO_FI_ENABLED && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsMoreMenuOpen(false);
+                        setIsSupportOpen(true);
+                        soundscape.playUiSfx('open');
+                      }}
+                      className="popover-item"
+                    >
+                      <span>Support the Sky</span>
+                      <Coffee size={13} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     role="menuitem"
@@ -1728,7 +1734,7 @@ export function App() {
           3. HOBBY SUSTAINABILITY & DONATION MODAL ("Support the Sky")
           ===================================================================== */}
       <AnimatePresence>
-        {isSupportOpen && (
+        {KO_FI_ENABLED && isSupportOpen && (
           <motion.div
             className="modal-backdrop"
             initial={{ opacity: 0 }}

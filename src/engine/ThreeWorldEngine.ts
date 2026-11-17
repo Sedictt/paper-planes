@@ -309,6 +309,7 @@ export class ThreeWorldEngine {
   private dragStart = { x: 0, y: 0 };
   private touchVel = { x: 0, y: 0 };
   private lastTouchTime = 0;
+  private lastTouchEndTime = 0;
   private pinchDist = 0;
   private planesPool: PaperPlaneNote[] = [];
 
@@ -689,6 +690,8 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
 
   private onClick = (e: MouseEvent): void => {
     if (this.dragMoved || this.cutsceneLocked) return;
+    // Ignore synthetic click events fired immediately after touchend on mobile browsers
+    if (performance.now() - this.lastTouchEndTime < 450) return;
     if (this.insideCottage) {
       const interiorHit = this.cottageInterior?.pickPropAt(
         e.clientX,
@@ -762,12 +765,13 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
     } else if (e.touches.length === 1 && this.isDragging) {
       const x = e.touches[0].clientX;
       const y = e.touches[0].clientY;
+      if (!this.dragMoved && Math.hypot(x - this.dragOrigin.x, y - this.dragOrigin.y) <= 14) {
+        return;
+      }
+      this.dragMoved = true;
+
       const dx = x - this.dragStart.x;
       const dy = y - this.dragStart.y;
-      if (Math.hypot(x - this.dragOrigin.x, y - this.dragOrigin.y) > 8) {
-        this.dragMoved = true;
-      }
-
       const now = performance.now();
       const dtSec = Math.max(0.004, (now - this.lastTouchTime) / 1000);
       const instVx = dx / dtSec;
@@ -782,6 +786,8 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
   };
 
   private onTouchEnd = (e: TouchEvent): void => {
+    if (this.cutsceneLocked) return;
+    this.lastTouchEndTime = performance.now();
     // Seamless 2-to-1 finger transition without camera jump
     if (e.touches.length === 1) {
       this.pinchDist = 0;
@@ -827,7 +833,8 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
             t.clientX,
             t.clientY,
             this.canvas,
-            this.cameraCtrl.camera
+            this.cameraCtrl.camera,
+            true
           );
           if (propHit) {
             this.handleInteractivePropClick(propHit);

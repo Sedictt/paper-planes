@@ -99,9 +99,10 @@ export class DioramaWorld {
     clientX: number,
     clientY: number,
     canvas: HTMLCanvasElement,
-    camera: THREE.Camera
+    camera: THREE.Camera,
+    isTouch = false
   ): InteractivePropId | null {
-    return this.island.pickInteractivePropAt(clientX, clientY, canvas, camera);
+    return this.island.pickInteractivePropAt(clientX, clientY, canvas, camera, isTouch);
   }
 
   public setHoveredProp(propId: InteractivePropId | null): void {

@@ -1951,13 +1951,34 @@ export class FloatingIslandBuilder {
     clientX: number,
     clientY: number,
     canvas: HTMLCanvasElement,
-    camera: THREE.Camera
+    camera: THREE.Camera,
+    isTouch = false
   ): InteractivePropId | null {
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return null;
-    const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((clientY - rect.top) / rect.height) * 2 + 1;
-    this.frogRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+
+    const raycastAt = (cx: number, cy: number, target: THREE.Object3D): boolean => {
+      const ndcX = ((cx - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((cy - rect.top) / rect.height) * 2 + 1;
+      this.frogRaycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+      return this.frogRaycaster.intersectObject(target, true).length > 0;
+    };
+
+    // On touch devices, give the tiny frog a forgiving 14px tap radius before falling through to shrine
+    if (isTouch && this.shrineFrog) {
+      const offsets: Array<[number, number]> = [
+        [0, 0],
+        [14, 0],
+        [-14, 0],
+        [0, 14],
+        [0, -14],
+      ];
+      for (const [ox, oy] of offsets) {
+        if (raycastAt(clientX + ox, clientY + oy, this.shrineFrog)) {
+          return 'frog';
+        }
+      }
+    }
 
     // Check frog before shrine because shrineFrog is a child of shrineGroup
     const targets: Array<[InteractivePropId, THREE.Object3D | undefined]> = [
@@ -1968,7 +1989,7 @@ export class FloatingIslandBuilder {
       ['waterfall', this.waterfallMesh],
     ];
     for (const [id, obj] of targets) {
-      if (obj && this.frogRaycaster.intersectObject(obj, true).length > 0) {
+      if (obj && raycastAt(clientX, clientY, obj)) {
         return id;
       }
     }

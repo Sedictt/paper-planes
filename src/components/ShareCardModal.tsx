@@ -36,7 +36,6 @@ export function ShareCardModal({ plane, islandSnapshotUrl, onClose }: ShareCardM
   const [aspect, setAspect] = useState<ShareAspect>('square');
   const [theme, setTheme] = useState<ShareTheme>('island');
   const [cardStyle, setCardStyle] = useState<ShareCardStyle>('glass');
-  const [showMeta, setShowMeta] = useState(true);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const [snapshotImg, setSnapshotImg] = useState<HTMLImageElement | null>(null);
 
@@ -56,10 +55,10 @@ export function ShareCardModal({ plane, islandSnapshotUrl, onClose }: ShareCardM
       aspect,
       theme,
       cardStyle,
-      showMeta,
+      showMeta: false,
       islandSnapshot: snapshotImg,
     });
-  }, [plane, aspect, theme, cardStyle, showMeta, snapshotImg]);
+  }, [plane, aspect, theme, cardStyle, snapshotImg]);
 
   const handleDownload = () => {
     const canvas = canvasRef.current;
@@ -176,15 +175,6 @@ export function ShareCardModal({ plane, islandSnapshotUrl, onClose }: ShareCardM
                   </button>
                 ))}
               </div>
-
-              <label className="share-origin-toggle">
-                <input
-                  type="checkbox"
-                  checked={showMeta}
-                  onChange={(e) => setShowMeta(e.target.checked)}
-                />
-                <span>Origin</span>
-              </label>
             </div>
 
             <div className="share-actions">

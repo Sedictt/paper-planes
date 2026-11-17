@@ -1011,7 +1011,7 @@ a:focus-visible {
 .paper-signature-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.85rem;
   padding-top: 0.95rem;
   border-top: 1px solid rgba(43, 33, 24, 0.09);
@@ -1100,25 +1100,54 @@ a:focus-visible {
   color: var(--paper-ink-muted);
 }
 
-.paper-textarea {
+.paper-compose-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.paper-title-input {
   width: 100%;
-  min-height: 8.5rem;
   background: transparent;
   border: none;
   outline: none;
   resize: none;
+  overflow: hidden;
+  padding: 0;
   font-family: inherit;
-  font-size: 1.12rem;
-  line-height: 1.48;
-  letter-spacing: -0.015em;
-  color: #1c1612;
-  font-weight: 600;
+  font-size: 1.32rem;
+  line-height: 1.24;
+  letter-spacing: -0.025em;
+  color: #1a1410;
+  font-weight: 800;
+  user-select: text;
+}
+
+.paper-title-input::placeholder {
+  color: rgba(110, 92, 74, 0.52);
+  font-weight: 700;
+}
+
+.paper-textarea {
+  width: 100%;
+  min-height: 7.5rem;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.96rem;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+  color: rgba(26, 20, 16, 0.78);
+  font-weight: 400;
   user-select: text;
 }
 
 .paper-textarea::placeholder {
   color: #9e8d7b;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .paper-controls-row {

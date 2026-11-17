@@ -157,10 +157,12 @@ export function App() {
   const [regionFallbackCountry, setRegionFallbackCountry] = useState<string | null>(null);
 
   // Compose Form State
+  const [composeTitle, setComposeTitle] = useState('');
   const [composeText, setComposeText] = useState('');
   const [composeTint, setComposeTint] = useState<PaperTint>('cream');
   const [composeError, setComposeError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const composeBodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   const countryOptions = useMemo(() => getCountryOptions(detectedCountry), [detectedCountry]);
 
@@ -428,6 +430,7 @@ export function App() {
     if (isSubmitting) return;
 
     setComposeError(null);
+    const trimmedTitle = composeTitle.trim();
     const trimmed = composeText.trim();
     if (trimmed.length < 3) {
       setComposeError('Write at least a few words before folding your plane.');
@@ -444,6 +447,7 @@ export function App() {
 
     try {
       const saved = await launchNewPlane({
+        ...(trimmedTitle ? { title: trimmedTitle } : {}),
         text: trimmed,
         biome: launchBiome,
         timeOfDay: activeTimeOfDay,
@@ -461,6 +465,7 @@ export function App() {
         }
       }
       setIsComposeOpen(false);
+      setComposeTitle('');
       setComposeText('');
       showToast({
         message: `Plane #${saved.number} folded and launched into the ${PALETTES[activeTimeOfDay].label} sky.`,
@@ -1262,21 +1267,6 @@ export function App() {
               })()}
 
               <div className="paper-signature-row">
-                <div className="paper-author">
-                  <div className="paper-avatar" aria-hidden="true">
-                    <Send size={13} />
-                  </div>
-                  <div className="paper-author-meta">
-                    <span className="paper-author-name">
-                      {selectedPlane.biome} · #{selectedPlane.number}
-                    </span>
-                    <span className="paper-author-sub tabular-nums">
-                      {PALETTES[selectedPlane.timeOfDay]?.label ?? 'Dusk'} · {selectedPlane.reads} unfolds ·{' '}
-                      {selectedPlane.distanceKm} km
-                    </span>
-                  </div>
-                </div>
-
                 <div className="paper-actions">
                   <button
                     id="share-plane-btn"
@@ -1367,21 +1357,49 @@ export function App() {
                 </button>
               </div>
 
-              <textarea
-                id="compose-note-textarea"
-                className="paper-textarea"
-                maxLength={320}
-                placeholder="Write whatever is on your mind—an unsaid feeling towards someone, a quiet confession, or a gentle wish for the next stranger who unfolds this plane..."
-                value={composeText}
-                onChange={(e) => setComposeText(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                    e.preventDefault();
-                    handleFoldAndLaunch();
-                  }
-                }}
-                autoFocus
-              />
+              <div className="paper-compose-fields">
+                <textarea
+                  id="compose-title-input"
+                  className="paper-title-input"
+                  rows={1}
+                  maxLength={80}
+                  placeholder="Write a title (optional)..."
+                  aria-label="Letter title"
+                  value={composeTitle}
+                  onChange={(e) => {
+                    setComposeTitle(e.target.value.replace(/\r?\n/g, ' '));
+                    e.target.style.height = 'auto';
+                    e.target.style.height = `${e.target.scrollHeight}px`;
+                  }}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      handleFoldAndLaunch();
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      composeBodyRef.current?.focus();
+                    }
+                  }}
+                  autoFocus
+                />
+
+                <textarea
+                  ref={composeBodyRef}
+                  id="compose-note-textarea"
+                  className="paper-textarea"
+                  maxLength={320}
+                  placeholder="Write whatever is on your mind—an unsaid feeling towards someone, a quiet confession, or a gentle wish for the next stranger who unfolds this plane..."
+                  aria-label="Letter body"
+                  value={composeText}
+                  onChange={(e) => setComposeText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault();
+                      handleFoldAndLaunch();
+                    }
+                  }}
+                />
+              </div>
 
               {/* Paper Customization Row: Paper Tint */}
               <div className="paper-controls-row">

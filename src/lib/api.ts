@@ -58,6 +58,7 @@ export async function fetchPlanesPool(forceRefresh = false, country?: string): P
 }
 
 export interface CreatePlaneInput {
+  title?: string;
   text: string;
   biome: string;
   timeOfDay: TimeOfDay;
@@ -75,6 +76,7 @@ export async function launchNewPlane(input: CreatePlaneInput): Promise<PaperPlan
       'Idempotency-Key': input.idempotencyKey,
     },
     body: JSON.stringify({
+      ...(input.title ? { title: input.title } : {}),
       text: input.text,
       biome: input.biome,
       timeOfDay: input.timeOfDay,

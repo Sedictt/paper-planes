@@ -36,6 +36,8 @@ export class IsometricCamera {
   public readonly panMaxY: number;
   public readonly lerpSpeed: number;
 
+  private velX = 0;
+  private velY = 0;
   private onZoomChange?: (z: number) => void;
 
   constructor(config: CameraConfig = {}, onZoomChange?: (z: number) => void) {
@@ -85,6 +87,8 @@ export class IsometricCamera {
   }
 
   public focusBiome(gx: number, gy: number, targetZoom: number, elev = 25): void {
+    this.velX = 0;
+    this.velY = 0;
     const worldX = (gx - gy) * (TILE_W / 2);
     const worldY = (gx + gy) * (TILE_H / 2) - elev;
 
@@ -115,6 +119,8 @@ export class IsometricCamera {
     const deltaX = ((dx / Math.max(1, viewportWidth)) * pixW) / this.zoom;
     const deltaY = ((dy / Math.max(1, viewportHeight)) * pixH) / this.zoom;
 
+    this.velX = 0;
+    this.velY = 0;
     this.targetCamX = this.clampCamX(this.targetCamX + deltaX);
     this.targetCamY = this.clampCamY(this.targetCamY + deltaY);
 
@@ -125,7 +131,49 @@ export class IsometricCamera {
     this.syncCameraTransform();
   }
 
+  public stopMomentum(): void {
+    this.velX = 0;
+    this.velY = 0;
+  }
+
+  /** Apply release velocity (screen px/sec) for smooth mobile inertia panning. */
+  public setPanVelocity(
+    vxScreen: number,
+    vyScreen: number,
+    viewportWidth: number,
+    viewportHeight: number
+  ): void {
+    const aspect = viewportWidth / Math.max(1, viewportHeight);
+    const pixW = Math.round(this.virtualHeight * aspect);
+    const pixH = this.virtualHeight;
+
+    const maxWorldSpeed = 1400 / Math.max(0.5, this.zoom);
+    const rawVx = ((vxScreen / Math.max(1, viewportWidth)) * pixW) / this.zoom;
+    const rawVy = ((vyScreen / Math.max(1, viewportHeight)) * pixH) / this.zoom;
+
+    const speed = Math.hypot(rawVx, rawVy);
+    if (speed < 35) {
+      this.velX = 0;
+      this.velY = 0;
+      return;
+    }
+    const scale = speed > maxWorldSpeed ? maxWorldSpeed / speed : 1;
+    this.velX = rawVx * scale;
+    this.velY = rawVy * scale;
+  }
+
   public update(dt: number): void {
+    if (Math.abs(this.velX) > 1 || Math.abs(this.velY) > 1) {
+      this.targetCamX = this.clampCamX(this.targetCamX + this.velX * dt);
+      this.targetCamY = this.clampCamY(this.targetCamY + this.velY * dt);
+      const decay = Math.exp(-7.5 * dt);
+      this.velX *= decay;
+      this.velY *= decay;
+    } else {
+      this.velX = 0;
+      this.velY = 0;
+    }
+
     const lerpFactor = Math.min(1, dt * this.lerpSpeed);
 
     this.camX += (this.targetCamX - this.camX) * lerpFactor;

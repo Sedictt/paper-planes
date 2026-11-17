@@ -298,7 +298,10 @@ export class ThreeWorldEngine {
   // Interaction State
   private isDragging = false;
   private dragMoved = false;
+  private dragOrigin = { x: 0, y: 0 };
   private dragStart = { x: 0, y: 0 };
+  private touchVel = { x: 0, y: 0 };
+  private lastTouchTime = 0;
   private pinchDist = 0;
   private planesPool: PaperPlaneNote[] = [];
 
@@ -560,6 +563,7 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
     this.canvas.addEventListener('touchstart', this.onTouchStart, { passive: true });
     this.canvas.addEventListener('touchmove', this.onTouchMove, { passive: true });
     this.canvas.addEventListener('touchend', this.onTouchEnd);
+    this.canvas.addEventListener('touchcancel', this.onTouchCancel);
 
     this.canvas.addEventListener('webglcontextlost', this.onContextLost, false);
     this.canvas.addEventListener('webglcontextrestored', this.onContextRestored, false);
@@ -585,8 +589,10 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
   };
 
   private onMouseDown = (e: MouseEvent): void => {
+    this.cameraCtrl.stopMomentum();
     this.isDragging = true;
     this.dragMoved = false;
+    this.dragOrigin = { x: e.clientX, y: e.clientY };
     this.dragStart = { x: e.clientX, y: e.clientY };
   };
 
@@ -594,11 +600,10 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
     if (this.isDragging) {
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
-      if (Math.hypot(dx, dy) > 6) {
+      if (Math.hypot(e.clientX - this.dragOrigin.x, e.clientY - this.dragOrigin.y) > 6) {
         this.dragMoved = true;
       }
-      const rect = this.canvas.getBoundingClientRect();
-      this.cameraCtrl.panByScreenDelta(dx, dy, rect.width, rect.height);
+      this.cameraCtrl.panByScreenDelta(dx, dy, this.canvas.clientWidth, this.canvas.clientHeight);
       this.dragStart = { x: e.clientX, y: e.clientY };
       return;
     }
@@ -659,14 +664,22 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
   };
 
   private onTouchStart = (e: TouchEvent): void => {
+    this.cameraCtrl.stopMomentum();
     if (e.touches.length === 2) {
+      this.isDragging = false;
+      this.dragMoved = true;
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       this.pinchDist = Math.hypot(dx, dy);
     } else if (e.touches.length === 1) {
       this.isDragging = true;
       this.dragMoved = false;
-      this.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      const x = e.touches[0].clientX;
+      const y = e.touches[0].clientY;
+      this.dragOrigin = { x, y };
+      this.dragStart = { x, y };
+      this.touchVel = { x: 0, y: 0 };
+      this.lastTouchTime = performance.now();
     }
   };
 
@@ -680,19 +693,44 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
       this.pinchDist = dist;
       this.dragMoved = true;
     } else if (e.touches.length === 1 && this.isDragging) {
-      const dx = e.touches[0].clientX - this.dragStart.x;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      if (Math.hypot(dx, dy) > 6) {
+      const x = e.touches[0].clientX;
+      const y = e.touches[0].clientY;
+      const dx = x - this.dragStart.x;
+      const dy = y - this.dragStart.y;
+      if (Math.hypot(x - this.dragOrigin.x, y - this.dragOrigin.y) > 8) {
         this.dragMoved = true;
       }
-      const rect = this.canvas.getBoundingClientRect();
-      this.cameraCtrl.panByScreenDelta(dx, dy, rect.width, rect.height);
-      this.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+
+      const now = performance.now();
+      const dtSec = Math.max(0.004, (now - this.lastTouchTime) / 1000);
+      const instVx = dx / dtSec;
+      const instVy = dy / dtSec;
+      this.touchVel.x = this.touchVel.x * 0.45 + instVx * 0.55;
+      this.touchVel.y = this.touchVel.y * 0.45 + instVy * 0.55;
+      this.lastTouchTime = now;
+
+      this.cameraCtrl.panByScreenDelta(dx, dy, this.canvas.clientWidth, this.canvas.clientHeight);
+      this.dragStart = { x, y };
     }
   };
 
   private onTouchEnd = (e: TouchEvent): void => {
-    if (!this.dragMoved && e.changedTouches && e.changedTouches.length === 1 && this.planeSystem) {
+    // Seamless 2-to-1 finger transition without camera jump
+    if (e.touches.length === 1) {
+      this.pinchDist = 0;
+      this.isDragging = true;
+      this.dragStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      this.touchVel = { x: 0, y: 0 };
+      this.lastTouchTime = performance.now();
+      return;
+    }
+
+    if (
+      !this.dragMoved &&
+      e.changedTouches &&
+      e.changedTouches.length === 1 &&
+      this.planeSystem
+    ) {
       const t = e.changedTouches[0];
       const hit = this.planeSystem.pickPlaneAt(
         t.clientX,
@@ -703,10 +741,32 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
       );
       if (hit) {
         this.onSelectPlane(hit.note);
+      } else if (
+        this.diorama?.pickFrogAt(t.clientX, t.clientY, this.canvas, this.cameraCtrl.camera)
+      ) {
+        this.diorama.triggerFrogBounce();
+        soundscape.playFrogRibbit();
+        window.dispatchEvent(new CustomEvent('paperplanes:frog-click'));
       }
+    } else if (this.dragMoved && performance.now() - this.lastTouchTime < 90) {
+      this.cameraCtrl.setPanVelocity(
+        this.touchVel.x,
+        this.touchVel.y,
+        this.canvas.clientWidth,
+        this.canvas.clientHeight
+      );
     }
+
     this.isDragging = false;
     this.pinchDist = 0;
+    this.touchVel = { x: 0, y: 0 };
+  };
+
+  private onTouchCancel = (): void => {
+    this.isDragging = false;
+    this.pinchDist = 0;
+    this.touchVel = { x: 0, y: 0 };
+    this.cameraCtrl.stopMomentum();
   };
 
   // ---------------------------------------------------------------------------
@@ -912,6 +972,7 @@ c*=1.-smoothstep(.45,.95,distance(u,vec2(.5)))*.34;gl_FragColor=vec4(c,1.);}`,
     this.canvas.removeEventListener('touchstart', this.onTouchStart);
     this.canvas.removeEventListener('touchmove', this.onTouchMove);
     this.canvas.removeEventListener('touchend', this.onTouchEnd);
+    this.canvas.removeEventListener('touchcancel', this.onTouchCancel);
 
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);

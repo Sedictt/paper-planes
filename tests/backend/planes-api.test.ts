@@ -36,11 +36,19 @@ describe('Paper Planes Backend API', () => {
     const body1 = (await res1.json()) as {
       planes: Array<{ id: string }>;
       total: number;
+      totalCount: number;
       nextCursor: string | null;
     };
     expect(body1.planes).toHaveLength(5);
     expect(body1.total).toBe(5);
+    expect(body1.totalCount).toBeGreaterThan(5);
     expect(body1.nextCursor).toBeTruthy();
+
+    const freshRes = await app.request('/api/planes?limit=5&fresh=1');
+    expect(freshRes.status).toBe(200);
+    expect(freshRes.headers.get('cache-control')).toBe('no-store');
+    const freshBody = (await freshRes.json()) as { totalCount: number };
+    expect(freshBody.totalCount).toBe(body1.totalCount);
 
     const res2 = await app.request(`/api/planes?limit=5&cursor=${encodeURIComponent(body1.nextCursor!)}`);
     expect(res2.status).toBe(200);

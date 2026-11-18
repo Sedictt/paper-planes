@@ -1,11 +1,17 @@
 import type { PaperPlaneNote, PaperTint, SkyStats, TimeOfDay } from '../types';
 
 let activeFetchController: AbortController | null = null;
-let cachedPool: { timestamp: number; country: string; planes: PaperPlaneNote[]; fallbackUsed: boolean } | null =
-  null;
+let cachedPool: {
+  timestamp: number;
+  country: string;
+  planes: PaperPlaneNote[];
+  totalCount: number;
+  fallbackUsed: boolean;
+} | null = null;
 
 export interface PlanesPoolResult {
   planes: PaperPlaneNote[];
+  totalCount: number;
   fallbackUsed: boolean;
 }
 
@@ -27,7 +33,11 @@ export async function fetchPlanesPool(forceRefresh = false, country?: string): P
   const cacheKey = country ?? '';
   // Stale-while-revalidate client cache (30s fresh window, keyed by country)
   if (!forceRefresh && cachedPool && cachedPool.country === cacheKey && Date.now() - cachedPool.timestamp < 30_000) {
-    return { planes: cachedPool.planes, fallbackUsed: cachedPool.fallbackUsed };
+    return {
+      planes: cachedPool.planes,
+      totalCount: cachedPool.totalCount,
+      fallbackUsed: cachedPool.fallbackUsed,
+    };
   }
 
   if (activeFetchController) {
@@ -42,6 +52,7 @@ export async function fetchPlanesPool(forceRefresh = false, country?: string): P
       : activeFetchController.signal;
   const query = new URLSearchParams({ limit: '15' });
   if (country) query.set('country', country);
+  if (forceRefresh) query.set('fresh', '1');
   const res = await fetch(`/api/planes?${query.toString()}`, {
     method: 'GET',
     signal,
@@ -51,10 +62,15 @@ export async function fetchPlanesPool(forceRefresh = false, country?: string): P
     throw new Error('Could not load paper planes from the sky.');
   }
 
-  const data = (await res.json()) as { planes: PaperPlaneNote[]; fallbackUsed?: boolean };
+  const data = (await res.json()) as {
+    planes: PaperPlaneNote[];
+    totalCount?: number;
+    fallbackUsed?: boolean;
+  };
   const fallbackUsed = Boolean(data.fallbackUsed);
-  cachedPool = { timestamp: Date.now(), country: cacheKey, planes: data.planes, fallbackUsed };
-  return { planes: data.planes, fallbackUsed };
+  const totalCount = typeof data.totalCount === 'number' ? data.totalCount : data.planes.length;
+  cachedPool = { timestamp: Date.now(), country: cacheKey, planes: data.planes, totalCount, fallbackUsed };
+  return { planes: data.planes, totalCount, fallbackUsed };
 }
 
 export interface CreatePlaneInput {
@@ -92,9 +108,24 @@ export async function launchNewPlane(input: CreatePlaneInput): Promise<PaperPlan
     throw new Error(data.error || 'Could not launch paper plane right now.');
   }
 
-  if (cachedPool && (!cachedPool.country || cachedPool.country === input.countryCode)) {
-    cachedPool.planes = [data.plane, ...cachedPool.planes].slice(0, 15);
-    cachedPool.fallbackUsed = false;
+  if (cachedPool) {
+    if (!cachedPool.country) {
+      cachedPool.planes = [data.plane, ...cachedPool.planes].slice(0, 15);
+      cachedPool.totalCount += 1;
+      cachedPool.fallbackUsed = false;
+    } else if (cachedPool.country === input.countryCode) {
+      if (cachedPool.fallbackUsed) {
+        cachedPool.planes = [data.plane];
+        cachedPool.totalCount = 1;
+        cachedPool.fallbackUsed = false;
+      } else {
+        cachedPool.planes = [data.plane, ...cachedPool.planes].slice(0, 15);
+        cachedPool.totalCount += 1;
+      }
+    } else if (cachedPool.fallbackUsed) {
+      cachedPool.planes = [data.plane, ...cachedPool.planes].slice(0, 15);
+      cachedPool.totalCount += 1;
+    }
   }
   return data.plane as PaperPlaneNote;
 }
@@ -139,13 +170,18 @@ export async function recordPlaneRead(id: string): Promise<void> {
 
 export function removePlaneFromPoolCache(id: string): void {
   if (!cachedPool) return;
+  const before = cachedPool.planes.length;
   cachedPool.planes = cachedPool.planes.filter((p) => p.id !== id);
+  if (cachedPool.planes.length < before) {
+    cachedPool.totalCount = Math.max(0, cachedPool.totalCount - 1);
+  }
 }
 
 export function restorePlaneInPoolCache(plane: PaperPlaneNote): void {
   if (!cachedPool) return;
   if (cachedPool.planes.some((p) => p.id === plane.id)) return;
   cachedPool.planes = [plane, ...cachedPool.planes].slice(0, 15);
+  cachedPool.totalCount += 1;
 }
 
 export async function flagPlaneNote(id: string, undo = false): Promise<void> {

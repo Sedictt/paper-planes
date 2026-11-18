@@ -14,6 +14,7 @@ export interface ListPlanesOptions {
 
 export interface ListPlanesResult {
   planes: PaperPlaneNote[];
+  totalCount: number;
   nextCursor: string | null;
   fallbackUsed: boolean;
 }
@@ -146,6 +147,7 @@ export class MemoryPlanesRepository implements PlanesRepository {
 
       return {
         planes: page.map(toPublicNote),
+        totalCount: filtered.length,
         nextCursor: hasMore && last ? encodeCursor(last.createdAtIso, last.id) : null,
       };
     };
@@ -380,22 +382,33 @@ export class PostgresPlanesRepository implements PlanesRepository {
     const fetchLimit = options.limit + 1;
 
     const queryMatching = async (countryFilter?: string) => {
-      const rows = await this.sql<PostgresPlaneRow[]>`
-        SELECT id, number, title, text, biome, time_of_day, paper_tint, stamp, reads, distance_km, flags, created_at
-        FROM planes
-        WHERE flags < 3
-          AND shadow_blocked = FALSE
-          ${options.biome ? this.sql`AND biome = ${options.biome}` : this.sql``}
-          ${options.timeOfDay ? this.sql`AND time_of_day = ${options.timeOfDay}` : this.sql``}
-          ${countryFilter ? this.sql`AND country_code = ${countryFilter}` : this.sql``}
-          ${
-            parsedCursor
-              ? this.sql`AND (created_at, id) < (${parsedCursor.createdAtIso}::timestamptz, ${parsedCursor.id})`
-              : this.sql``
-          }
-        ORDER BY created_at DESC, id DESC
-        LIMIT ${fetchLimit}
-      `;
+      const [rows, countRows] = await Promise.all([
+        this.sql<PostgresPlaneRow[]>`
+          SELECT id, number, title, text, biome, time_of_day, paper_tint, stamp, reads, distance_km, flags, created_at
+          FROM planes
+          WHERE flags < 3
+            AND shadow_blocked = FALSE
+            ${options.biome ? this.sql`AND biome = ${options.biome}` : this.sql``}
+            ${options.timeOfDay ? this.sql`AND time_of_day = ${options.timeOfDay}` : this.sql``}
+            ${countryFilter ? this.sql`AND country_code = ${countryFilter}` : this.sql``}
+            ${
+              parsedCursor
+                ? this.sql`AND (created_at, id) < (${parsedCursor.createdAtIso}::timestamptz, ${parsedCursor.id})`
+                : this.sql``
+            }
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${fetchLimit}
+        `,
+        this.sql<{ total_count: number }[]>`
+          SELECT COUNT(*)::int AS total_count
+          FROM planes
+          WHERE flags < 3
+            AND shadow_blocked = FALSE
+            ${options.biome ? this.sql`AND biome = ${options.biome}` : this.sql``}
+            ${options.timeOfDay ? this.sql`AND time_of_day = ${options.timeOfDay}` : this.sql``}
+            ${countryFilter ? this.sql`AND country_code = ${countryFilter}` : this.sql``}
+        `,
+      ]);
 
       const hasMore = rows.length > options.limit;
       const pageRows = hasMore ? rows.slice(0, options.limit) : rows;
@@ -405,6 +418,7 @@ export class PostgresPlanesRepository implements PlanesRepository {
 
       return {
         planes: pageRows.map(rowToPublicNote),
+        totalCount: Number(countRows[0]?.total_count ?? pageRows.length),
         nextCursor: hasMore && last && lastCreatedIso ? encodeCursor(lastCreatedIso, last.id) : null,
       };
     };

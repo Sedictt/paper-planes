@@ -213,9 +213,13 @@ export function createApp(deps: CreateAppDeps = {}): Hono {
       );
     }
 
-    const { planes, nextCursor, fallbackUsed } = await repo.listVisiblePlanes(parsedQuery.data);
-    c.header('Cache-Control', 'public, s-maxage=15, stale-while-revalidate=45');
-    return c.json({ planes, total: planes.length, nextCursor, fallbackUsed });
+    const fresh = c.req.query('fresh') === '1';
+    const { planes, totalCount, nextCursor, fallbackUsed } = await repo.listVisiblePlanes(parsedQuery.data);
+    c.header(
+      'Cache-Control',
+      fresh ? 'no-store' : 'public, s-maxage=15, stale-while-revalidate=45'
+    );
+    return c.json({ planes, total: planes.length, totalCount, nextCursor, fallbackUsed });
   });
 
   app.get('/planes/random', async (c) => {

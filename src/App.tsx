@@ -115,6 +115,7 @@ export function App() {
   const recentCaughtIdsRef = useRef<string[]>([]);
 
   const [planes, setPlanes] = useState<PaperPlaneNote[]>([]);
+  const [totalPlanesCount, setTotalPlanesCount] = useState<number | null>(null);
   const [timeMode, setTimeMode] = useState<TimeMode>('auto');
   const [isTimeMenuOpen, setIsTimeMenuOpen] = useState(false);
   const [weather, setWeather] = useState<WeatherMode>(() => getScheduledWeather());
@@ -358,21 +359,50 @@ export function App() {
     };
   }, []);
 
-  // Fetch planes whenever the active region filter changes (after initial region detection)
+  // Fetch planes whenever the active region filter changes (after initial region detection),
+  // and keep the sky pool & drifting count fresh periodically and on tab focus.
   useEffect(() => {
     if (!hasResolvedRegion) return;
+    let cancelled = false;
     const activeCountry = selectedCountry || undefined;
-    fetchPlanesPool(false, activeCountry)
-      .then(({ planes: nextPlanes, fallbackUsed }) => {
-        setPlanes(nextPlanes);
-        setRegionFallbackCountry(fallbackUsed && activeCountry ? activeCountry : null);
-        engineRef.current?.syncPlanes(nextPlanes);
-      })
-      .catch(() => {
-        showToast({
-          message: 'Sky is offline right now — showing local sanctuary.',
+
+    const loadPool = (forceRefresh: boolean) => {
+      fetchPlanesPool(forceRefresh, activeCountry)
+        .then(({ planes: nextPlanes, totalCount, fallbackUsed }) => {
+          if (cancelled) return;
+          setPlanes(nextPlanes);
+          setTotalPlanesCount(totalCount);
+          setRegionFallbackCountry(fallbackUsed && activeCountry ? activeCountry : null);
+          engineRef.current?.syncPlanes(nextPlanes);
+        })
+        .catch(() => {
+          if (cancelled || forceRefresh) return;
+          showToast({
+            message: 'Sky is offline right now — showing local sanctuary.',
+          });
         });
-      });
+    };
+
+    loadPool(false);
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadPool(true);
+      }
+    }, 30_000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadPool(true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [selectedCountry, hasResolvedRegion]);
 
   // Sync Engine state when Time, Weather, Fireworks, Graphics, or Planes change
@@ -640,11 +670,16 @@ export function App() {
 
       soundscape.playPaperWhoosh('launch');
       soundscape.playUiSfx('success');
-      if (!selectedCountry || selectedCountry === originCountry) {
+      if (!selectedCountry || (selectedCountry === originCountry && !regionFallbackCountry)) {
         setPlanes([{ ...saved, isUserCreated: true }, ...prevPlanes].slice(0, 15));
-        if (selectedCountry === originCountry) {
-          setRegionFallbackCountry(null);
-        }
+        setTotalPlanesCount((c) => (c ?? prevPlanes.length) + 1);
+      } else if (selectedCountry === originCountry && regionFallbackCountry) {
+        setRegionFallbackCountry(null);
+        setPlanes([{ ...saved, isUserCreated: true }]);
+        setTotalPlanesCount(1);
+      } else if (regionFallbackCountry) {
+        setPlanes([{ ...saved, isUserCreated: true }, ...prevPlanes].slice(0, 15));
+        setTotalPlanesCount((c) => (c ?? prevPlanes.length) + 1);
       }
       setIsComposeOpen(false);
       setComposeTitle('');
@@ -695,6 +730,7 @@ export function App() {
     soundscape.playUiSfx('flag');
     setSelectedPlane(null);
     setPlanes((prev) => prev.filter((p) => p.id !== plane.id));
+    setTotalPlanesCount((c) => (c !== null ? Math.max(0, c - 1) : null));
     removePlaneFromPoolCache(plane.id);
     showToast(
       {
@@ -705,6 +741,7 @@ export function App() {
     );
     flagPlaneNote(plane.id, false).catch((err) => {
       setPlanes((prev) => (prev.some((p) => p.id === plane.id) ? prev : [plane, ...prev]));
+      setTotalPlanesCount((c) => (c !== null ? c + 1 : null));
       restorePlaneInPoolCache(plane);
       showToast({
         message: err instanceof Error ? err.message : 'Could not fold plane away right now.',
@@ -717,6 +754,7 @@ export function App() {
     soundscape.playUiSfx('success');
     const restored = toast.undoPlane;
     setPlanes((prev) => (prev.some((p) => p.id === restored.id) ? prev : [restored, ...prev]));
+    setTotalPlanesCount((c) => (c !== null ? c + 1 : null));
     restorePlaneInPoolCache(restored);
     if (toastTimerRef.current) {
       window.clearTimeout(toastTimerRef.current);
@@ -725,6 +763,7 @@ export function App() {
     setToast(null);
     flagPlaneNote(restored.id, true).catch((err) => {
       setPlanes((prev) => prev.filter((p) => p.id !== restored.id));
+      setTotalPlanesCount((c) => (c !== null ? Math.max(0, c - 1) : null));
       removePlaneFromPoolCache(restored.id);
       showToast({
         message: err instanceof Error ? err.message : 'Could not restore plane right now.',
@@ -952,7 +991,9 @@ export function App() {
             <div className="brand-subtitle">
               <span>{PALETTES[activeTimeOfDay].label}</span>
               <span>·</span>
-              <span className="tabular-nums">{planes.length} drifting</span>
+              <span className="tabular-nums">
+                {(totalPlanesCount ?? planes.length).toLocaleString()} drifting
+              </span>
               {selectedCountry && !regionFallbackCountry && (
                 <span className="hide-mobile">· {getCountryName(selectedCountry)}</span>
               )}
